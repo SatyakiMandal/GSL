@@ -7,8 +7,8 @@ unusual coverage coincided with an unusual **benchmark-adjusted** price move.
 It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
-**Status: Phase 1 complete** (feasibility spike + news ingestion and sentiment).
-Phases 2–3 not yet built.
+**Status: Phase 2 complete** (feasibility spike, news ingestion and sentiment,
+event-study engine). Phase 3 (reporting) not yet built.
 
 ---
 
@@ -195,6 +195,71 @@ which is what the PRD sanctions. Nothing tries to get around a gate.
 
 ---
 
+## Phase 2 — Financial data and event-study engine
+
+Joins the collected coverage to price history, computes benchmark-adjusted
+(abnormal) returns, and ranks candidate incident days.
+
+```bash
+# Reuse a Phase 1 news run; prices from a provider.
+python -m ceia.analyze \
+  --company "Adani Enterprises" --ticker ADANIENT.NS --benchmark ^NSEI \
+  --start 2023-01-24 --end 2023-02-10 \
+  --news out/adani_jan2023.json
+
+# Or scrape and analyse in one pass.
+python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
+  --start 2023-01-24 --end 2023-02-10 --alias Adani
+```
+
+Flags: `--event-window BEFORE AFTER` (default `-1 3`), `--return-z`,
+`--coverage-z`, `--lead-in-days`, `--price-csv DIR` (offline prices).
+
+**Price providers** are tried in order: `yfinance` → Yahoo chart API →
+Alpha Vantage (`ALPHAVANTAGE_API_KEY`) → local CSV.
+
+### ⚠️ The live price feed is unverified
+
+No provider was reachable from the build environment — `yfinance` fails at the
+TLS layer through a proxy, Yahoo `429`s shared IPs, NSE India `403`s, and BSE
+returns an SPA shell. **Alpha Vantage works but needs a free key.**
+
+The maths is tested against synthetic series with known parameters (beta
+recovered to ±0.12; a market-wide move on a beta-1 stock yields an abnormal
+return of exactly 0). The end-to-end run used real scraped articles joined to a
+**synthetic** price series — it demonstrates the wiring, not any finding about
+Adani. **PRD Success Metric #2 cannot be claimed until this runs on real prices.**
+See [`docs/phase2-notes.md`](docs/phase2-notes.md).
+
+### Method
+
+| Concept | Implementation |
+|---|---|
+| Expected return | Market model `α + β·R_m` fitted before the window; falls back to β=1 and says so |
+| Abnormal return | `R_i − expected`, standardised by estimation-window residual SD |
+| CAR | Summed over the event window in **trading days**, truncation flagged |
+| Incident | A day with **both** unusual coverage **and** an unusual abnormal return |
+
+The estimation window ends 5 trading days before the analysis window, so the
+baseline is not contaminated by run-up to the event being measured.
+
+### Two bugs the end-to-end run caught
+
+Both were invisible to unit tests and only appeared when the whole pipeline ran:
+
+1. **The trading calendar ended at the analysis window**, so after-close news on
+   the last day had no session to attach to — 10 of 24 items silently became
+   unattributed, and late CARs came back truncated. Fixed with a 21-day tail
+   buffer.
+2. **The coverage baseline was incoherent on short windows.** In a five-day
+   window built around a known event every day is an event day, so no day looked
+   unusual and *nothing flagged* — against abnormal returns of z = −12.5 and
+   z = −16.9. The coverage test now relaxes to "has any coverage" below 10
+   news-carrying days, and the output says so in bold terms rather than quietly
+   changing its own bar.
+
+---
+
 ## Limitations
 
 Stated here and repeated in the tool's own output, because it is a finding about
@@ -211,6 +276,11 @@ the method rather than a disclaimer:
   defence against reading a market-wide move as company-specific news, but it
   does not establish that an article caused anything.
 - **Not investment advice**, not a live signal, and daily closes only.
+- **Short windows cannot support a coverage baseline.** Below 10 news-carrying
+  trading days the tool flags on the abnormal return alone and says so. Widen the
+  range for the stricter test.
+- **A market-adjusted fallback assumes beta = 1**, which inflates abnormal
+  returns for a high-beta stock. Every run states which model it used.
 
 ## Assumptions and judgment calls
 

@@ -1,0 +1,330 @@
+"""Incident detection and ranking — PRD Section 8.
+
+For each trading day, coverage is aggregated (volume, sentiment) and compared
+against that day's abnormal return. A day is a candidate "incident" when
+**both** are unusual: coverage that stands out against this company's own
+baseline, *and* an abnormal return that stands out against the estimation
+window's residual spread.
+
+Requiring both is what keeps the output honest. Unusual coverage alone is just a
+busy news day; an unusual return alone is a move with no visible explanation.
+The tool claims only that the two coincided, which is why every label in the
+output says "coincided with" and never "caused".
+
+A note on what the ranking is *not*. The combined score orders candidates for a
+reader's attention. It is not a p-value and not a test statistic. The t-values
+reported alongside CAR come from a single company over a handful of events,
+where the independence assumptions behind them do not hold — they are printed
+because they are conventional, and immediately qualified for the same reason.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+from dataclasses import asdict, dataclass, field
+from datetime import date
+
+import numpy as np
+import pandas as pd
+
+from .dedupe import cluster_sizes
+from .models import NewsItem
+from .returns import cumulative_abnormal_return
+
+log = logging.getLogger(__name__)
+
+# A day needs to clear both bars to be a candidate.
+DEFAULT_COVERAGE_Z = 1.0
+DEFAULT_RETURN_Z = 1.5
+# Below this many observations, z-scores against the company's own baseline are
+# too unstable to lean on, and the run says so instead of pretending otherwise.
+MIN_DAYS_FOR_BASELINE = 10
+
+
+@dataclass
+class DailyCoverage:
+    day: date
+    item_count: int = 0
+    unique_count: int = 0
+    sources: list[str] = field(default_factory=list)
+    mean_sentiment: float = 0.0
+    weighted_sentiment: float = 0.0
+    min_sentiment: float = 0.0
+    max_sentiment: float = 0.0
+    dominant_event: str = ""
+    headlines: list[str] = field(default_factory=list)
+    after_close_count: int = 0
+
+
+@dataclass
+class Incident:
+    day: date
+    abnormal_return: float
+    abnormal_return_z: float
+    raw_return: float
+    benchmark_return: float
+    coverage_z: float
+    sentiment_z: float
+    item_count: int
+    mean_sentiment: float
+    dominant_event: str
+    score: float
+    direction_agrees: bool
+    car: dict = field(default_factory=dict)
+    headlines: list[str] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        record = asdict(self)
+        record["day"] = self.day.isoformat()
+        return record
+
+
+def aggregate_by_day(items: list[NewsItem]) -> dict[date, DailyCoverage]:
+    """Roll news up onto the trading day each item was attributed to.
+
+    Duplicates are excluded from the sentiment average so one syndicated wire
+    story carried by four outlets does not count four times — but the outlets
+    that carried it are still recorded, since breadth of pickup is a real
+    signal about how much attention a story got.
+    """
+    carriers = cluster_sizes(items)
+    by_day: dict[date, DailyCoverage] = {}
+
+    for item in items:
+        if item.trading_day is None:
+            continue  # Unattributed items are reported separately, never guessed.
+        coverage = by_day.setdefault(item.trading_day, DailyCoverage(day=item.trading_day))
+        coverage.item_count += 1
+        if item.source not in coverage.sources:
+            coverage.sources.append(item.source)
+        if item.after_close:
+            coverage.after_close_count += 1
+        if item.duplicate_of is not None:
+            continue
+        coverage.unique_count += 1
+        coverage.headlines.append(item.headline)
+
+    for day, coverage in by_day.items():
+        unique_items = [i for i in items
+                        if i.trading_day == day and i.duplicate_of is None]
+        if not unique_items:
+            continue
+        scores = [i.sentiment_score for i in unique_items]
+        coverage.mean_sentiment = float(np.mean(scores))
+        coverage.min_sentiment = float(np.min(scores))
+        coverage.max_sentiment = float(np.max(scores))
+
+        # Weight by relevance and by how many outlets carried the story: a
+        # front-page story picked up everywhere should move the day's tone more
+        # than a single passing item that scraped past the threshold.
+        weights = [max(i.relevance_score, 0.01) * carriers.get(i.url, 1)
+                   for i in unique_items]
+        total = sum(weights) or 1.0
+        coverage.weighted_sentiment = float(
+            sum(s * w for s, w in zip(scores, weights)) / total)
+
+        categories = [i.event_category for i in unique_items if i.event_category]
+        if categories:
+            coverage.dominant_event = max(set(categories), key=categories.count)
+    return by_day
+
+
+def _z(value: float, mean: float, sd: float) -> float:
+    if not sd or not math.isfinite(sd):
+        return 0.0
+    return (value - mean) / sd
+
+
+def build_daily_table(
+    frame: pd.DataFrame,
+    coverage: dict[date, DailyCoverage],
+    start: date,
+    end: date,
+) -> pd.DataFrame:
+    """One row per trading day in the analysis window, prices joined to news."""
+    window = frame.loc[pd.Timestamp(start):pd.Timestamp(end)].copy()
+    rows = []
+    for timestamp, row in window.iterrows():
+        day = timestamp.date()
+        day_coverage = coverage.get(day)
+        rows.append({
+            "date": day,
+            "close": row["close"],
+            "return": row["return"],
+            "benchmark_return": row["benchmark_return"],
+            "expected_return": row.get("expected_return", float("nan")),
+            "abnormal_return": row["abnormal_return"],
+            "abnormal_return_z": row.get("abnormal_return_z", float("nan")),
+            "item_count": day_coverage.item_count if day_coverage else 0,
+            "unique_count": day_coverage.unique_count if day_coverage else 0,
+            "mean_sentiment": day_coverage.mean_sentiment if day_coverage else 0.0,
+            "weighted_sentiment": day_coverage.weighted_sentiment if day_coverage else 0.0,
+            "dominant_event": day_coverage.dominant_event if day_coverage else "",
+            "sources": ",".join(day_coverage.sources) if day_coverage else "",
+        })
+    if not rows:
+        # A window with no trading days at all (a bad date range, or a holiday
+        # stretch). Return an empty frame with the right columns so callers can
+        # treat it uniformly instead of special-casing a KeyError.
+        empty = pd.DataFrame(columns=[
+            "close", "return", "benchmark_return", "expected_return",
+            "abnormal_return", "abnormal_return_z", "item_count", "unique_count",
+            "mean_sentiment", "weighted_sentiment", "dominant_event", "sources",
+            "coverage_z", "sentiment_z",
+        ])
+        empty.index.name = "date"
+        return empty
+
+    table = pd.DataFrame(rows).set_index("date")
+
+    # Baselines are the company's own coverage over the analysis window.
+    counts = table["unique_count"].astype(float)
+    table["coverage_z"] = [
+        _z(v, counts.mean(), counts.std(ddof=1)) for v in counts
+    ]
+    sentiments = table.loc[table["unique_count"] > 0, "weighted_sentiment"]
+    s_mean = float(sentiments.mean()) if len(sentiments) else 0.0
+    s_sd = float(sentiments.std(ddof=1)) if len(sentiments) > 1 else 0.0
+    table["sentiment_z"] = [
+        _z(v, s_mean, s_sd) if c > 0 else 0.0
+        for v, c in zip(table["weighted_sentiment"], table["unique_count"])
+    ]
+    return table
+
+
+def rank_incidents(
+    table: pd.DataFrame,
+    frame: pd.DataFrame,
+    event_window: tuple[int, int] = (-1, 3),
+    coverage_threshold: float = DEFAULT_COVERAGE_Z,
+    return_threshold: float = DEFAULT_RETURN_Z,
+    top_n: int | None = None,
+) -> list[Incident]:
+    """Flag and rank candidate incident days."""
+    incidents: list[Incident] = []
+    if table.empty:
+        return incidents
+
+    # The coverage baseline is the company's own coverage across the analysis
+    # window. In a window short enough to be built *around* a known event, that
+    # baseline is incoherent - every day is an event day, so no day looks
+    # unusual relative to its neighbours and nothing would ever flag. Below the
+    # threshold, "has any coverage at all" replaces the z-test, and the run's
+    # caveats say the coverage bar was relaxed.
+    days_with_news = int((table["unique_count"] > 0).sum())
+    thin_baseline = days_with_news < MIN_DAYS_FOR_BASELINE
+
+    for day, row in table.iterrows():
+        if row["unique_count"] == 0:
+            continue
+        if thin_baseline:
+            coverage_unusual = True
+        else:
+            coverage_unusual = (row["coverage_z"] >= coverage_threshold
+                                or abs(row["sentiment_z"]) >= coverage_threshold)
+        return_unusual = abs(row["abnormal_return_z"]) >= return_threshold
+        if not (coverage_unusual and return_unusual):
+            continue
+
+        # Does the price move the way the coverage's tone would suggest? A
+        # disagreement is not a failure - it is often the interesting case
+        # (good news already priced in, say) - so it is surfaced, not filtered.
+        sentiment = row["weighted_sentiment"]
+        abnormal = row["abnormal_return"]
+        agrees = bool(sentiment * abnormal > 0) if sentiment and abnormal else False
+
+        score = (abs(row["abnormal_return_z"])
+                 * (1 + max(row["coverage_z"], 0))
+                 * (1 + abs(sentiment)))
+        if agrees:
+            score *= 1.25  # Direction agreement makes a candidate more legible.
+
+        incidents.append(Incident(
+            day=day,
+            abnormal_return=float(abnormal),
+            abnormal_return_z=float(row["abnormal_return_z"]),
+            raw_return=float(row["return"]),
+            benchmark_return=float(row["benchmark_return"]),
+            coverage_z=float(row["coverage_z"]),
+            sentiment_z=float(row["sentiment_z"]),
+            item_count=int(row["unique_count"]),
+            mean_sentiment=float(sentiment),
+            dominant_event=str(row["dominant_event"]),
+            score=float(score),
+            direction_agrees=agrees,
+            car=cumulative_abnormal_return(frame, day, event_window),
+            sources=str(row["sources"]).split(",") if row["sources"] else [],
+        ))
+
+    incidents.sort(key=lambda i: -i.score)
+    return incidents[:top_n] if top_n else incidents
+
+
+def attach_headlines(incidents: list[Incident], items: list[NewsItem],
+                     limit: int = 5) -> list[Incident]:
+    """Hang the source items behind each flag onto the incident (Section 8)."""
+    for incident in incidents:
+        relevant = [i for i in items
+                    if i.trading_day == incident.day and i.duplicate_of is None]
+        relevant.sort(key=lambda i: (-abs(i.sentiment_score), -i.relevance_score))
+        incident.headlines = [
+            f"[{i.source}] {i.headline} ({i.sentiment_label}, "
+            f"rel={i.relevance_score:.2f})"
+            for i in relevant[:limit]
+        ]
+    return incidents
+
+
+def caveats(table: pd.DataFrame, incidents: list[Incident],
+            model_kind: str, scale_source: str) -> list[str]:
+    """The limitations this specific run has to state (PRD Section 9)."""
+    notes = [
+        "This is a structured case study, not a statistically validated causal "
+        "finding. One company over one date range yields too few distinct "
+        "incidents for the sentiment/abnormal-return relationship to carry "
+        "statistical significance; a proper event study spans dozens of "
+        "companies and events.",
+        "Flagged days are days on which unusual coverage COINCIDED WITH an "
+        "unusual benchmark-adjusted return. Coincidence in time is not evidence "
+        "that an article caused a price move.",
+    ]
+    days_with_news = int((table["unique_count"] > 0).sum()) if len(table) else 0
+    if days_with_news < MIN_DAYS_FOR_BASELINE:
+        notes.append(
+            f"Only {days_with_news} trading day(s) in this window carried "
+            "coverage — too few to say which days were unusually busy, so the "
+            "coverage test was RELAXED to 'any coverage at all' and days were "
+            "flagged on the abnormal return alone. Treat the ranking as "
+            "'notable price moves that had coverage', not as evidence that the "
+            "coverage was itself unusual. Widen the date range to restore the "
+            "stricter test."
+        )
+    if model_kind == "market-adjusted":
+        notes.append(
+            "Abnormal returns use the market-adjusted model (beta fixed at 1.0) "
+            "because there was not enough clean lead-in data to fit a market "
+            "model. A high-beta stock will show a systematically inflated "
+            "abnormal return under this assumption."
+        )
+    if scale_source and "analysis-window" in scale_source:
+        notes.append(
+            "Abnormal returns are standardised against the analysis window's own "
+            "spread rather than a clean estimation window, which understates how "
+            "unusual the largest moves are."
+        )
+    if len(incidents) <= 2:
+        notes.append(
+            f"{len(incidents)} candidate incident(s) were flagged. Rankings over "
+            "so few candidates are indicative only."
+        )
+    disagreeing = [i for i in incidents if not i.direction_agrees]
+    if disagreeing:
+        notes.append(
+            f"{len(disagreeing)} flagged day(s) show a price move in the opposite "
+            "direction to the coverage's tone. That is not necessarily an error: "
+            "news can be already priced in, or the day's move driven by something "
+            "the coverage did not capture."
+        )
+    return notes

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 from datetime import date, datetime
@@ -152,6 +153,63 @@ class YFinanceProvider(PriceProvider):
                          volume.to_numpy() if volume is not None else None)
 
 
+class AlphaVantageProvider(PriceProvider):
+    """Alpha Vantage daily series, keyed from ``ALPHAVANTAGE_API_KEY``.
+
+    The PRD puts Alpha Vantage out of scope for v1 because it was proposed for
+    *global* coverage. It is included here for a different reason: it is the one
+    price host reachable from environments where Yahoo rate-limits the egress IP
+    and the NSE/BSE sites return 403. Free keys cover NSE (``SYMBOL.BSE`` /
+    ``SYMBOL.NSE``) at 25 requests/day, which is ample for one company plus a
+    benchmark.
+    """
+
+    name = "alphavantage"
+
+    def __init__(self, api_key: str | None = None,
+                 cache_dir: Path | str = "cache/prices") -> None:
+        self.api_key = api_key or os.environ.get("ALPHAVANTAGE_API_KEY")
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _translate(symbol: str) -> str:
+        """Map a yfinance-style symbol onto Alpha Vantage's spelling."""
+        if symbol.endswith(".NS"):
+            return symbol[:-3] + ".BSE"
+        return symbol.lstrip("^")
+
+    def history(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+        if not self.api_key:
+            raise PriceError("ALPHAVANTAGE_API_KEY is not set")
+        av_symbol = self._translate(symbol)
+        cache = self.cache_dir / f"av_{av_symbol}.json"
+        if cache.exists():
+            payload = json.loads(cache.read_text())
+        else:
+            resp = requests.get(
+                "https://www.alphavantage.co/query",
+                params={"function": "TIME_SERIES_DAILY", "symbol": av_symbol,
+                        "outputsize": "full", "apikey": self.api_key},
+                headers={"User-Agent": _UA}, timeout=40,
+            )
+            if resp.status_code != 200:
+                raise PriceError(f"{symbol}: HTTP {resp.status_code}")
+            payload = resp.json()
+            if "Time Series (Daily)" not in payload:
+                # Alpha Vantage reports quota and bad symbols in the body.
+                note = payload.get("Note") or payload.get("Information") or \
+                    payload.get("Error Message") or str(payload)[:160]
+                raise PriceError(f"{symbol}: {note}")
+            cache.write_text(json.dumps(payload))
+
+        series = payload["Time Series (Daily)"]
+        rows = {pd.Timestamp(day): float(values["4. close"])
+                for day, values in series.items()}
+        frame = _as_frame(list(rows.keys()), list(rows.values()))
+        return frame.loc[str(start):str(end)]
+
+
 class CsvProvider(PriceProvider):
     """Load prices from ``<dir>/<symbol>.csv`` with ``date`` and ``close`` columns.
 
@@ -183,7 +241,8 @@ def load_prices(
     providers: list[PriceProvider] | None = None,
 ) -> tuple[pd.DataFrame, str]:
     """Try each provider in order; return the first success and its name."""
-    providers = providers or [YFinanceProvider(), YahooChartProvider(), CsvProvider()]
+    providers = providers or [YFinanceProvider(), YahooChartProvider(),
+                              AlphaVantageProvider(), CsvProvider()]
     errors = []
     for provider in providers:
         try:
