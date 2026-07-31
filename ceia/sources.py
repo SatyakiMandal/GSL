@@ -1,0 +1,112 @@
+"""Static description of the four news sources.
+
+Phase 0 established that the search-page route the PRD assumed (Section 7.1)
+is disallowed by robots.txt on two of the four sites, so each source records
+both the *assumed* route and the route we can actually use. ``discovery``
+lists candidate entry points in preference order; the probe reports which of
+them robots.txt actually permits for the configured user agent.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class Source:
+    key: str
+    name: str
+    origin: str
+    # The search endpoint the PRD assumed we would drive.
+    search_url: str
+    # Robots-sanctioned discovery entry points, best first.
+    discovery: list[str] = field(default_factory=list)
+    # A representative article, used to test rendering and paywall behaviour.
+    sample_article: str | None = None
+    notes: str = ""
+
+
+ECONOMIC_TIMES = Source(
+    key="economic_times",
+    name="Economic Times",
+    origin="https://economictimes.indiatimes.com",
+    search_url="https://economictimes.indiatimes.com/searchresult.cms?query=adani",
+    discovery=[
+        # Month-partitioned news sitemaps, advertised in robots.txt.
+        "https://economictimes.indiatimes.com/etstatic/sitemaps/et/news/sitemap-index.xml",
+        # Day-partitioned archive; starttime is days since 1899-12-30.
+        "https://economictimes.indiatimes.com/archivelist/year-2023,month-1,starttime-44950.cms",
+        "https://economictimes.indiatimes.com/topic/adani-enterprises",
+    ],
+    sample_article=(
+        "https://economictimes.indiatimes.com/markets/stocks/news/"
+        "adani-enterprises-fpo-subscribed-only-20-on-last-day-will-it-be-successful/"
+        "articleshow/97481359.cms"
+    ),
+    notes="Company /topic/ slugs 301-redirect to the stock quote page.",
+)
+
+FINANCIAL_EXPRESS = Source(
+    key="financial_express",
+    name="Financial Express",
+    origin="https://www.financialexpress.com",
+    search_url="https://www.financialexpress.com/?s=adani",
+    discovery=[
+        "https://www.financialexpress.com/sitemap.xml",
+        "https://www.financialexpress.com/news-sitemap.xml",
+    ],
+    sample_article=None,
+    notes=(
+        "robots.txt disallows /search/ and /*?s= for all agents, and issues a "
+        "blanket Disallow to ClaudeBot / Claude-Web / anthropic-ai."
+    ),
+)
+
+BUSINESS_LINE = Source(
+    key="business_line",
+    name="Business Line",
+    origin="https://www.thehindubusinessline.com",
+    search_url="https://www.thehindubusinessline.com/search/?q=adani",
+    discovery=[
+        "https://www.thehindubusinessline.com/sitemap/archive.xml",
+        "https://www.thehindubusinessline.com/sitemap/update.xml",
+        "https://www.thehindubusinessline.com/sitemap/googlenews/all/all.xml",
+    ],
+    sample_article=None,
+    notes=(
+        "robots.txt disallows /search/ for all agents, and issues a blanket "
+        "Disallow to ClaudeBot / Claude-Web / Anthropic-ai."
+    ),
+)
+
+BUSINESS_STANDARD = Source(
+    key="business_standard",
+    name="Business Standard",
+    origin="https://www.business-standard.com",
+    search_url="https://www.business-standard.com/search?q=adani",
+    discovery=[
+        "https://www.business-standard.com/sitemap.xml",
+    ],
+    sample_article=None,
+    notes="Akamai edge returns 403 for every request, including /robots.txt.",
+)
+
+ALL_SOURCES = [ECONOMIC_TIMES, FINANCIAL_EXPRESS, BUSINESS_LINE, BUSINESS_STANDARD]
+
+# User-agent tokens that these sites use to refuse AI crawlers. The probe
+# reports which of them each site blocks, because it changes who may run this
+# tool and under what identity.
+AI_AGENT_TOKENS = [
+    "ClaudeBot",
+    "Claude-Web",
+    "anthropic-ai",
+    "GPTBot",
+    "ChatGPT-User",
+    "OAI-SearchBot",
+    "PerplexityBot",
+    "CCBot",
+    "Google-Extended",
+    "Bytespider",
+    "Meta-ExternalAgent",
+    "Applebot-Extended",
+]

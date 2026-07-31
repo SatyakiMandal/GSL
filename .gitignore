@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Scraped HTML, price JSON and the provenance log are run artefacts.
+# Keep the directory, not its contents.
+cache/*
+!cache/.gitkeep
+
+# Machine-readable probe output; the narrative lives in docs/phase0-findings.md
+docs/phase0-*.json
+data/prices/*.csv
