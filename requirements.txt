@@ -4,3 +4,9 @@ pandas>=2.0
 lxml>=5.0
 beautifulsoup4>=4.12
 yfinance>=0.2.40
+
+# Phase 1 (ingestion + FinBERT sentiment)
+# torch: install the CPU wheel to avoid pulling CUDA -
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0
+transformers>=4.40

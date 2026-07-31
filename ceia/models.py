@@ -1,0 +1,107 @@
+"""Core data types shared across ingestion, scoring and reporting."""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from dataclasses import asdict, dataclass, field
+from datetime import date, datetime
+from typing import Any
+
+# Indian market hours. Items published after the close belong to the next
+# trading day's reaction (PRD Section 10).
+IST_OFFSET_HOURS = 5.5
+MARKET_CLOSE_HOUR = 15
+MARKET_CLOSE_MINUTE = 30
+
+
+@dataclass
+class NewsItem:
+    """One collected article.
+
+    ``published_at`` is timezone-aware whenever the source gave us a usable
+    timestamp. When it did not, ``timestamp_confidence`` is ``"missing"`` and
+    the item is flagged rather than silently attributed to a trading day, which
+    is the misattribution failure Section 10 calls out.
+    """
+
+    source: str
+    url: str
+    headline: str
+    published_at: datetime | None = None
+    timestamp_confidence: str = "missing"  # exact | date-only | missing
+    body: str = ""
+    snippet: str = ""
+    paywalled: bool = False
+
+    # Set by the relevance filter.
+    relevance_score: float = 0.0
+    matched_aliases: list[str] = field(default_factory=list)
+    headline_match: bool = False
+
+    # Set by the sentiment/event tagger.
+    sentiment_label: str = ""
+    sentiment_score: float = 0.0  # signed: + positive, - negative
+    sentiment_confidence: float = 0.0
+    event_category: str = ""
+
+    # Set by the trading-day aligner.
+    trading_day: date | None = None
+    after_close: bool = False
+
+    # Provenance.
+    fetched_at: str = ""
+    content_sha256: str = ""
+    duplicate_of: str | None = None
+
+    @property
+    def text_for_scoring(self) -> str:
+        """Headline plus body; the headline is what most drives sentiment."""
+        body = self.body or self.snippet
+        return f"{self.headline}. {body}".strip()
+
+    @property
+    def dedupe_key(self) -> str:
+        """Normalised headline, for spotting syndicated wire copy across sites."""
+        normalised = re.sub(r"[^a-z0-9 ]+", " ", self.headline.lower())
+        normalised = re.sub(r"\s+", " ", normalised).strip()
+        return hashlib.sha1(normalised.encode()).hexdigest()
+
+    def to_dict(self) -> dict[str, Any]:
+        record = asdict(self)
+        record["published_at"] = self.published_at.isoformat() if self.published_at else None
+        record["trading_day"] = self.trading_day.isoformat() if self.trading_day else None
+        return record
+
+
+@dataclass
+class RunConfig:
+    """The inputs from PRD Section 6."""
+
+    company: str
+    ticker: str
+    exchange: str = "NSE"
+    benchmark: str = "^NSEI"
+    start: date = date.today()
+    end: date = date.today()
+    aliases: list[str] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)
+    event_window: tuple[int, int] = (-1, 3)
+    min_relevance: float = 0.35
+
+    @property
+    def all_aliases(self) -> list[str]:
+        """Company name plus user-supplied aliases, longest first.
+
+        Longest-first matters so "Adani Enterprises" is preferred over "Adani"
+        when both match, which keeps the more specific alias in
+        ``matched_aliases``.
+        """
+        names = [self.company, *self.aliases]
+        seen, out = set(), []
+        for name in sorted(names, key=len, reverse=True):
+            key = name.lower().strip()
+            if key and key not in seen:
+                seen.add(key)
+                out.append(name.strip())
+        return out

@@ -60,7 +60,7 @@ FINANCIAL_EXPRESS = Source(
     ],
     sample_article=(
         "https://www.financialexpress.com/market/"
-        "adani-enterprises-collects-rs-5985-crore-from-anchor-investors-ahead-of-fpo-2960"
+        "adani-enterprises-collects-rs-5985-crore-from-anchor-investors-ahead-of-fpo-2960438/"
     ),
     notes=(
         "robots.txt disallows /search/ and /*?s= for all agents, and issues a "
@@ -91,6 +91,28 @@ BUSINESS_LINE = Source(
     ),
 )
 
+MONEYCONTROL = Source(
+    key="moneycontrol",
+    name="Moneycontrol",
+    origin="https://www.moneycontrol.com",
+    search_url="https://www.moneycontrol.com/news/tags/adani.html",
+    discovery=[
+        # Year index -> month sitemaps (sitemap-post-YYYY-MM.xml).
+        "https://www.moneycontrol.com/news/index-sitemap-2023.xml",
+        "https://www.moneycontrol.com/news/sitemap/sitemap-post-2023-01.xml",
+        "https://www.moneycontrol.com/news/news-sitemap.xml",
+    ],
+    sample_article=(
+        "https://www.moneycontrol.com/news/business/"
+        "indias-regulator-discussed-adani-firms-with-ratings-agencies-9975491.html"
+    ),
+    notes=(
+        "Replaces Business Standard. robots.txt refuses GPTBot / CCBot / "
+        "ChatGPT-User / Google-Extended but names no Anthropic agent. "
+        "JSON-LD NewsArticle is nested inside an @graph."
+    ),
+)
+
 BUSINESS_STANDARD = Source(
     key="business_standard",
     name="Business Standard",
@@ -100,10 +122,15 @@ BUSINESS_STANDARD = Source(
         "https://www.business-standard.com/sitemap.xml",
     ],
     sample_article=None,
-    notes="Akamai edge returns 403 for every request, including /robots.txt.",
+    notes=("Akamai edge returns 403 for every request, including /robots.txt. "
+           "Replaced by Moneycontrol; see docs/phase0-findings.md."),
 )
 
-ALL_SOURCES = [ECONOMIC_TIMES, FINANCIAL_EXPRESS, BUSINESS_LINE, BUSINESS_STANDARD]
+# Business Standard is retained only so the probe keeps reporting why it is
+# unavailable; ingestion uses ACTIVE_SOURCES.
+ALL_SOURCES = [ECONOMIC_TIMES, FINANCIAL_EXPRESS, BUSINESS_LINE,
+               MONEYCONTROL, BUSINESS_STANDARD]
+ACTIVE_SOURCES = [ECONOMIC_TIMES, FINANCIAL_EXPRESS, BUSINESS_LINE, MONEYCONTROL]
 
 # User-agent tokens that these sites use to refuse AI crawlers. The probe
 # reports which of them each site blocks, because it changes who may run this

@@ -11,3 +11,4 @@ cache/*
 # Machine-readable probe output; the narrative lives in docs/phase0-findings.md
 docs/phase0-*.json
 data/prices/*.csv
+out/

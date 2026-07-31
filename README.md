@@ -7,7 +7,8 @@ unusual coverage coincided with an unusual **benchmark-adjusted** price move.
 It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
-**Status: Phase 0 (feasibility spike) complete.** Phases 1–3 not yet built.
+**Status: Phase 1 complete** (feasibility spike + news ingestion and sentiment).
+Phases 2–3 not yet built.
 
 ---
 
@@ -86,6 +87,9 @@ Useful flags: `--user-agent` (what identity to evaluate `robots.txt` against),
 | `ceia/prices.py` | Pluggable price providers (`yfinance` / Yahoo chart / CSV) |
 | `ceia/probe.py` | The spike itself; `python -m ceia.probe` |
 
+Phase 1 adds `models.py`, `discovery.py`, `extract.py`, `relevance.py`,
+`dedupe.py`, `align.py`, `sentiment.py` and `ingest.py` (see the table below).
+
 **`ceia/robots.py`** implements the matcher rather than using stdlib
 `urllib.robotparser`, which does not support the `*` and `$` wildcards. Both
 Financial Express (`Disallow: /*?s=`) and Business Line (`Disallow: /search/*`)
@@ -113,6 +117,81 @@ Section 10 obligations hold everywhere by construction:
 Nothing in Phase 0 attempts to bypass a paywall, a login wall, or an anti-bot
 control. Where content is gated, the plan is the fallback the PRD sanctions:
 headline, timestamp, and visible snippet.
+
+---
+
+## Phase 1 — News ingestion and sentiment
+
+Collects company coverage across the three usable sources, filters it to what is
+actually *about* the company, removes syndicated duplicates, places each item on
+the trading day that could have reacted to it, and scores it with FinBERT.
+
+```bash
+python -m ceia.ingest \
+  --company "Adani Enterprises" --ticker ADANIENT.NS \
+  --alias "Adani" --alias "Adani Group" --alias "AEL" \
+  --start 2023-01-24 --end 2023-01-28 \
+  --out out/adani_jan2023.json
+```
+
+Useful flags: `--limit N` (cap fetches for a trial run), `--skip-sentiment` (no
+model download), `--min-relevance` (default 0.35), `--min-interval` (seconds
+between requests to one origin, default 2), `--sources`.
+
+Output is JSON: run config, per-source status, counts, and every item with its
+timestamp, trading-day attribution, relevance score, sentiment and event tag.
+
+### Pipeline
+
+| Stage | Module | What it does |
+|---|---|---|
+| Discovery | `ceia/discovery.py` | Date range → candidate URLs, per source, via sitemaps |
+| Fetch/parse | `ceia/extract.py` | Headline, publish time, body, snippet, paywall state |
+| Relevance | `ceia/relevance.py` | Alias matching + score; drops passing mentions |
+| Dedupe | `ceia/dedupe.py` | Marks syndicated wire copy across outlets |
+| Alignment | `ceia/align.py` | Publish time → trading day, honouring the 15:30 IST close |
+| Sentiment | `ceia/sentiment.py` | FinBERT + coarse event category |
+| Orchestration | `ceia/ingest.py` | Wires it together; CLI |
+
+### Verified run
+
+Over the Hindenburg window (24–28 Jan 2023), 6,296 discovered URLs narrowed to
+208 by slug pre-filter, 48 fetched, 34 inside the window, 24 relevant — drawn
+from all four active sources. FinBERT scored "Bloodbath in Adani Group stocks
+leaves Rs 19,000-crore scar on LIC's book" negative and "FPO on track, no price
+band change, says Adani Group" positive.
+
+**13 of 34 items published after the 15:30 close.** The next-trading-day
+attribution rule is load-bearing, not an edge case — nearly 40% of items would
+have been credited to a price move that happened before the news existed.
+
+### Design notes
+
+**Sitemaps, not search pages.** Financial Express, Business Line and Moneycontrol
+all disallow their search paths in `robots.txt` for every user agent. Their
+sitemaps are date-partitioned anyway, which is the axis this tool needs.
+
+**Slug pre-filtering before fetching.** A month of Economic Times coverage is
+~13,000 URLs. Fetching all of them to find ~200 would be slow and rude, so
+candidates are filtered on their URL slug first — a 97% reduction on the test
+run. The cost is recall: a story that never names the company in its URL is
+missed. That is disclosed in the run stats rather than hidden.
+
+**Round-robin across sources.** Candidates are interleaved before `--limit`
+applies, so a capped run samples every source instead of spending its whole
+budget on whichever ran first.
+
+**The headline outweighs the body** in both relevance (0.60 of the score) and
+sentiment (0.60 of the blend). A headline is a claim about what a story is
+about; bodies dilute it with background.
+
+**Long articles are chunked, not truncated.** FinBERT takes 512 tokens; bodies
+are split and averaged by confidence so a reversal late in a story is not lost.
+
+**Paywall detection needs two signals.** Marker words like "Subscribe Now" appear
+in page furniture on every article, so a marker only counts as a paywall when the
+body is also too short to analyse. Gated items fall back to headline + snippet,
+which is what the PRD sanctions. Nothing tries to get around a gate.
 
 ---
 
@@ -163,7 +242,20 @@ Decisions made without asking, and the reasoning:
 5. **A CSV price provider was added** beyond the PRD's `yfinance`/`nsepy`
    options, so the event-study engine stays reproducible and testable when the
    network path is blocked.
-6. **Test case: Adani Enterprises (`ADANIENT.NS`) vs NIFTY 50 (`^NSEI`), Jan–Feb
+6. **Moneycontrol replaces Business Standard.** Its `robots.txt` is readable,
+   permits the sitemap route, and names no Anthropic agent. Year→month sitemaps
+   give 8,164 URLs for January 2023 alone.
+7. **Relevance threshold defaults to 0.35**, tuned so a headline subject (~0.9)
+   passes and a passing mention in a market round-up (~0.2) does not. It is a
+   judgment call, exposed as `--min-relevance` rather than buried.
+8. **Dedupe compares headlines, not bodies.** Paywalled items have no body, and
+   syndicated copy is often re-edited below the headline. Duplicates are marked,
+   not deleted, so a report can still say four outlets carried one story.
+9. **Without price data, the trading calendar falls back to weekdays**, which
+   misses exchange holidays — 26 January 2023 (Republic Day) is attributed as a
+   trading day in a news-only run. Phase 2 supplies the real calendar from the
+   price series. This is covered by a test that documents the gap.
+10. **Test case: Adani Enterprises (`ADANIENT.NS`) vs NIFTY 50 (`^NSEI`), Jan–Feb
    2023.** The Hindenburg report is an unambiguous, well-documented negative
    shock, which is what Success Metric #2 needs — a known incident that should
    surface as a top candidate with a negative abnormal return.
