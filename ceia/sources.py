@@ -52,13 +52,20 @@ FINANCIAL_EXPRESS = Source(
     origin="https://www.financialexpress.com",
     search_url="https://www.financialexpress.com/?s=adani",
     discovery=[
+        # Day-partitioned: sitemap.xml?yyyy=YYYY&mm=MM&dd=DD. The index lists
+        # only ~92 recent days, but dated URLs resolve far beyond that window.
         "https://www.financialexpress.com/sitemap.xml",
+        "https://www.financialexpress.com/sitemap.xml?yyyy=2023&mm=01&dd=25",
         "https://www.financialexpress.com/news-sitemap.xml",
     ],
-    sample_article=None,
+    sample_article=(
+        "https://www.financialexpress.com/market/"
+        "adani-enterprises-collects-rs-5985-crore-from-anchor-investors-ahead-of-fpo-2960"
+    ),
     notes=(
         "robots.txt disallows /search/ and /*?s= for all agents, and issues a "
-        "blanket Disallow to ClaudeBot / Claude-Web / anthropic-ai."
+        "blanket Disallow to ClaudeBot / Claude-Web / anthropic-ai. "
+        "Article pages carry JSON-LD NewsArticle."
     ),
 )
 
@@ -68,14 +75,19 @@ BUSINESS_LINE = Source(
     origin="https://www.thehindubusinessline.com",
     search_url="https://www.thehindubusinessline.com/search/?q=adani",
     discovery=[
+        # Day-partitioned: /sitemap/archive/all/YYYYMMDD_1.xml, back to Dec 2010.
         "https://www.thehindubusinessline.com/sitemap/archive.xml",
-        "https://www.thehindubusinessline.com/sitemap/update.xml",
+        "https://www.thehindubusinessline.com/sitemap/archive/all/20230125_1.xml",
         "https://www.thehindubusinessline.com/sitemap/googlenews/all/all.xml",
     ],
-    sample_article=None,
+    sample_article=(
+        "https://www.thehindubusinessline.com/markets/"
+        "adani-vs-hindenburg-a-brief-story-of-short-sellers/article66432953.ece"
+    ),
     notes=(
         "robots.txt disallows /search/ for all agents, and issues a blanket "
-        "Disallow to ClaudeBot / Claude-Web / Anthropic-ai."
+        "Disallow to ClaudeBot / Claude-Web / Anthropic-ai. No JSON-LD: the "
+        "publish time comes from article:published_time / publish-date meta tags."
     ),
 )
 

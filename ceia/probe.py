@@ -152,6 +152,27 @@ def _probe_article(url: str, fetcher: Fetcher) -> dict:
                 "dateModified": obj.get("dateModified"),
                 "articleBody_chars": len(body),
             }
+
+    # Business Line carries no NewsArticle JSON-LD but does expose the publish
+    # time as meta tags. Timestamps drive the trading-day attribution rule, so
+    # the probe reports whichever mechanism the site actually uses.
+    out["meta_timestamps"] = {
+        name: value
+        for name, pattern in (
+            ("article:published_time",
+             r'<meta[^>]+property="article:published_time"[^>]+content="([^"]+)"'),
+            ("publish-date",
+             r'<meta[^>]+name="publish-date"[^>]+content="([^"]+)"'),
+            ("itemprop:datePublished",
+             r'<meta[^>]+itemprop="datePublished"[^>]+content="([^"]+)"'),
+        )
+        if (match := re.search(pattern, html)) and (value := match.group(1))
+    }
+    out["timestamp_source"] = (
+        "json-ld" if out.get("jsonld", {}).get("datePublished")
+        else "meta-tag" if out["meta_timestamps"]
+        else "NONE FOUND"
+    )
     return out
 
 
@@ -257,6 +278,7 @@ def main() -> None:
             print(f"    - {d['url'][:78]}\n        {' '.join(bits)}")
         if f.article_check:
             print(f"  article check       : {json.dumps(f.article_check.get('jsonld', {}))}")
+            print(f"  timestamp source    : {f.article_check.get('timestamp_source')} {f.article_check.get('meta_timestamps') or ''}")
             if f.article_check.get("paywall_markers"):
                 print(f"  paywall markers     : {f.article_check['paywall_markers']}")
 

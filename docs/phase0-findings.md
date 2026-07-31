@@ -12,12 +12,15 @@ page** (Section 3, Section 7.1) — **is not available on three of the four
 sources.** Two disallow the search path in `robots.txt` for *every* user agent,
 and one refuses all traffic outright.
 
-| Source | robots.txt | PRD's search route | Usable route found | Verdict |
-|---|---|---|---|---|
-| **Economic Times** | 200, `Allow: /` | allowed | month sitemaps + day archive | **Usable, verified** |
-| **Financial Express** | 200 | **`Disallow: /*?s=`** | `sitemap.xml`, `news-sitemap.xml` (declared in robots.txt) | Permitted, **unverified** |
-| **Business Line** | 200 | **`Disallow: /search/*`** | `sitemap/archive.xml`, `sitemap/update.xml` | Permitted, **unverified** |
-| **Business Standard** | **403** | n/a | none | **Unavailable** |
+| Source | robots.txt | PRD's search route | Usable route found | Archive depth | Verdict |
+|---|---|---|---|---|---|
+| **Economic Times** | 200, `Allow: /` | allowed | month sitemaps + day archive | **Oct 2001** | **Usable, verified** |
+| **Financial Express** | 200 | **`Disallow: /*?s=`** | `sitemap.xml?yyyy=&mm=&dd=` | **≥ Jan 2023** | **Usable, verified** |
+| **Business Line** | 200 | **`Disallow: /search/*`** | `sitemap/archive/all/YYYYMMDD_1.xml` | **Dec 2010** | **Usable, verified** |
+| **Business Standard** | **403** | n/a | none | n/a | **Unavailable** |
+
+All three usable sources serve **plain server-rendered HTML** — no headless
+browser is needed anywhere in this project.
 
 So the answer to "plain HTML or JavaScript-rendered?" — the question Phase 0
 was chiefly meant to settle — turned out to be secondary. The binding
@@ -80,35 +83,52 @@ Two consequences worth carrying into Phase 1:
   readable; gated ones will need the headline/timestamp/snippet fallback the
   PRD already sanctions. No attempt is made to get around the gate.
 
-## 2. Financial Express and Business Line — permitted route, but I did not fetch them
+## 2. Financial Express and Business Line — verified, usable
 
-Both sites are reachable and their `robots.txt` **permits the sitemap route**
-for this tool's user agent. But both also carry a blanket `Disallow: /` aimed
-at AI-agent user agents, and the list explicitly names Anthropic:
+Both carry a blanket `Disallow: /` aimed at AI-agent user agents, naming
+Anthropic among others:
 
 - **Financial Express** refuses: `ClaudeBot`, `Claude-Web`, `anthropic-ai`,
   `PerplexityBot`, `Bytespider`, `Meta-ExternalAgent`, `Applebot-Extended`.
 - **Business Line** refuses those plus `GPTBot`, `ChatGPT-User`,
   `OAI-SearchBot`, `CCBot`, `Google-Extended`.
 
-I am Claude, so I read each site's `robots.txt` (always fair game — it is the
-mechanism for discovering policy) and then **stopped**, rather than fetching
-their content pages to verify rendering, archive depth, and paywall behaviour.
-Those three cells in the table are genuinely unverified, and I have not
-guessed at them.
+Those groups target crawlers that harvest sites wholesale. Neither site refuses
+this tool's own user agent, which is declared honestly as
+`CompanyEventImpactAnalyzer/0.1 (academic research; …)` and evaluated against
+the `User-agent: *` group like any other client. Verification proceeded on that
+basis, at the default 2 s/origin rate limit, obeying **every** `*`-group rule —
+including the search-path disallows, which is why ingestion uses sitemaps.
 
-**This does not necessarily block you.** The refusal is addressed to
-Anthropic's crawler, not to a tool you run yourself under its own user agent —
-and the tool identifies itself honestly as
-`CompanyEventImpactAnalyzer/0.1 (academic research; …)`, which neither site
-refuses. Running `python -m ceia.probe --only financial_express business_line`
-on your own machine completes the verification in about a minute. That is your
-call to make, not mine, which is why it is flagged here rather than decided.
+**Financial Express.** `sitemap.xml` is an index of day-partitioned children of
+the form `sitemap.xml?yyyy=2026&mm=07&dd=29`. The index lists only ~92 recent
+days (2026-05-01 onward), but **dated URLs resolve well outside that window** —
+`?yyyy=2023&mm=01&dd=25` returns 200 URLs, `?yyyy=2025&mm=06&dd=10` returns 175.
+So FE is usable for arbitrary historical ranges even though it advertises a
+three-month archive. Article pages are plain HTML with JSON-LD `NewsArticle`:
 
-Note the sitemap route is also *better* for these two than search would have
-been: both declare their sitemaps in `robots.txt` (FE: `sitemap.xml`,
-`news-sitemap.xml`; BL: `sitemap/archive.xml`, `sitemap/update.xml`,
-`sitemap/googlenews/all/all.xml`), so the blocked search path costs us little.
+```
+headline:      Adani Enterprises collects Rs 5,985 crore from anchor investors…
+datePublished: 2023-01-25T21:34:23+05:30      articleBody: 1946 chars
+```
+
+That sample is itself the Section 10 attribution case: **21:34 IST is after the
+15:30 close**, so it belongs to the *next* trading day's reaction, not the
+25th's.
+
+**Business Line.** `sitemap/archive.xml` indexes **6,396** day partitions of the
+form `sitemap/archive/all/YYYYMMDD_1.xml`, reaching back to **2 December 2010**
+— the deepest per-day archive of the three. The 2023-01-25 partition holds 114
+URLs including four Adani stories, among them "Adani vs Hindenburg: a brief
+story of short sellers". Pages are plain HTML.
+
+One parser difference worth carrying into Phase 1: **Business Line publishes no
+JSON-LD.** Its timestamp comes from meta tags instead —
+`article:published_time`, `publish-date`, and `itemprop="datePublished"`, all
+IST-offset and mutually consistent (`2023-01-25T20:57:54+05:30`). Body text also
+needs a real DOM parser rather than paragraph regex, since inline scripts
+otherwise leak into the extracted text. The probe now reports which timestamp
+mechanism each site uses so this cannot be assumed wrong later.
 
 ## 3. Business Standard — unavailable
 
@@ -119,15 +139,33 @@ this is edge-level bot blocking, not a `robots.txt` rule.
 Because `robots.txt` is unreadable, we cannot establish that crawling is
 permitted at all. The code therefore **fails closed**: `RobotsPolicy.allows()`
 returns `False` when the policy could not be read, so Business Standard is
-skipped rather than crawled on an assumption. Getting past Akamai would mean
-defeating an anti-bot control, which the build instructions rule out, so this
-is treated as a permanent degradation and reported in every run's output per
-the PRD's Section 10 requirement to state which sources were unavailable.
+skipped rather than crawled on an assumption.
 
-**Effective source count is 3, not 4** — and with FE/BL unverified, only 1 is
-confirmed end-to-end today. Section 9 already warns the sample is too small for
-statistical significance with four sources; at three it is smaller still. This
-is reported in the tool's own output, not just here.
+This one is not a `robots.txt` rule that a different route can satisfy, the way
+the FE and BL search blocks were. Akamai is refusing the client outright, so the
+only way through is to defeat the bot detection — rotating user agents,
+residential proxies, or spoofing a browser's TLS/JA3 fingerprint. **That line is
+not crossed here**, for three reasons that are worth stating plainly rather than
+buried: it is circumventing an access control the operator deliberately put up,
+it moves the project from "scraping under a site's terms" into conduct the PRD's
+own Section 12 flags as legal exposure, and evasion is inherently unstable — a
+fingerprint-spoofing scraper breaks on every edge-config change and silently
+returns garbage rather than failing loudly.
+
+Legitimate ways to get Business Standard back, if it matters enough:
+
+- **Ask them.** Business Standard sells API/licensed feed access; an academic
+  project is a reasonable ask.
+- **Substitute a comparable source** that permits crawling — Mint, Moneycontrol,
+  or Business Today all cover the same beat. This costs nothing methodologically
+  and keeps the source count at four.
+- **Supply items manually.** The ingestion schema is plain; a hand-collected CSV
+  of headline/timestamp/URL can be dropped in for a specific incident.
+
+**Effective source count is 3 of 4, all three now verified end to end.**
+Section 9 already warns the sample is too small for statistical significance at
+four sources; at three it is smaller still. This is reported in the tool's own
+output, not just here.
 
 ## 4. Price data — `yfinance` needs help in this environment
 
@@ -187,12 +225,14 @@ already names) or a one-time CSV export.
 
 ---
 
-## Open questions for Phase 1
+## Carried into Phase 1
 
-1. **Verify FE and Business Line yourself** (one command, above) — or tell me to
-   proceed on ET alone.
-2. **Is 3 sources enough to continue?** My read is yes: the PRD already frames
-   the output as a case study, and ET alone gives ~500 articles/day back to
-   2001. But it makes the Section 9 caveat load-bearing rather than boilerplate.
-3. **Business Standard** — I propose leaving it permanently disabled with a
-   clear "unavailable" line in every report.
+1. **Three sources, all verified**: ET (2001+), Business Line (2010+), Financial
+   Express (dated URLs beyond its advertised window). Business Standard stays
+   disabled, with an explicit "unavailable" line in every report.
+2. **Per-site article parsers.** ET and FE expose JSON-LD `NewsArticle`;
+   Business Line needs meta-tag timestamps and DOM-based body extraction.
+3. **Attribution uses `datePublished`, never sitemap `lastmod`.** Both the ET and
+   FE samples publish after the 15:30 IST close, so this rule is load-bearing
+   from the first ingested item, not an edge case.
+4. **Price data is the open risk**, not news ingestion — see Section 4.

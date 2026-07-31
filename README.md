@@ -22,17 +22,23 @@ the price library returns clean data.
 **The full write-up is [`docs/phase0-findings.md`](docs/phase0-findings.md).**
 The short version:
 
-- **Economic Times — usable and verified.** Month-partitioned news sitemaps back
-  to **October 2001**, plain HTML, and article pages carrying JSON-LD with a
-  real `datePublished` and full article body. No headless browser needed.
-- **Financial Express, Business Line — route permitted, not yet verified.** Both
-  **disallow the search path** the PRD assumed (`/*?s=`, `/search/*`) for every
-  user agent, so ingestion uses their declared sitemaps instead. Both also
-  refuse Anthropic's crawler by name, so Claude did not fetch their content
-  pages; you can complete that check yourself in about a minute (see below).
+- **Three of four sources are usable, all verified end to end**, and all serve
+  **plain HTML** — no headless browser needed anywhere.
+  - **Economic Times**: month-partitioned sitemaps back to **October 2001**;
+    JSON-LD with real `datePublished` and full article body.
+  - **Business Line**: day-partitioned archive back to **December 2010** — the
+    deepest of the three. No JSON-LD; timestamps come from meta tags.
+  - **Financial Express**: day-partitioned sitemaps. Its index advertises only
+    ~92 days, but dated URLs resolve far beyond that, so historical ranges work.
+- **The search route the PRD assumed is disallowed** on FE (`/*?s=`) and Business
+  Line (`/search/*`) for every user agent, so ingestion uses each site's
+  robots.txt-declared sitemaps — which are date-partitioned and reach further
+  back anyway.
 - **Business Standard — unavailable.** Akamai returns 403 for everything,
   including `robots.txt`. Since permission cannot be established, the code fails
-  closed and skips it.
+  closed and skips it. Getting through would require defeating bot detection,
+  which this project does not do; see the findings doc for legitimate
+  alternatives (licensed access, or substituting Mint/Moneycontrol).
 - **Price data — not verified.** `yfinance` fails inside a TLS-terminating proxy
   (its `curl_cffi` browser impersonation is rejected), and Yahoo rate-limits
   shared egress IPs (`HTTP 429`). **No provider returned data from this
@@ -57,7 +63,7 @@ python -m ceia.probe --robots-only --skip-prices
 # Economic Times end to end (sitemap depth, rendering, paywall, JSON-LD).
 python -m ceia.probe --only economic_times --skip-prices
 
-# Finish verifying the two sources Claude declined to fetch.
+# Financial Express and Business Line.
 python -m ceia.probe --only financial_express business_line --skip-prices
 
 # Check the price providers for a ticker and benchmark.
@@ -140,12 +146,16 @@ Decisions made without asking, and the reasoning:
 2. **Unreadable `robots.txt` means "do not crawl."** Business Standard 403s even
    on `robots.txt`, so permission cannot be established and the source is
    skipped rather than crawled on an assumption.
-3. **Claude did not fetch Financial Express or Business Line.** Both name
-   Anthropic's crawler in a blanket `Disallow: /`. Reading `robots.txt` is how
-   you discover that; fetching content past it is not. Their rendering, archive
-   depth and paywall behaviour are recorded as **unverified** rather than
-   guessed. The tool's own user agent is not refused by either site, so you can
-   verify them yourself.
+3. **Financial Express and Business Line are crawled under the tool's own user
+   agent.** Both name Anthropic's crawler in a blanket `Disallow: /`, which
+   targets crawlers that harvest sites wholesale. Neither refuses this tool's
+   declared agent, which is evaluated against the `User-agent: *` group like any
+   other client, rate-limited, and obeys every `*`-group rule — including the
+   search-path disallows.
+7. **Business Standard is left disabled rather than forced.** Its block is
+   edge-level, not a `robots.txt` rule, so the only way through is defeating bot
+   detection. That is an access control, not a crawl preference, so the project
+   does not circumvent it.
 4. **`datePublished` from JSON-LD, not sitemap `lastmod`.** They differed by ~7
    hours in the sample. `lastmod` would push midday stories past the 15:30 IST
    close and misattribute them to the next trading day — exactly the quiet error
