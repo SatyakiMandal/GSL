@@ -33,10 +33,13 @@ The short version:
 - **Business Standard — unavailable.** Akamai returns 403 for everything,
   including `robots.txt`. Since permission cannot be established, the code fails
   closed and skips it.
-- **Price data.** `yfinance` is tried first, but it fails inside a
-  TLS-terminating proxy (its `curl_cffi` browser impersonation is rejected), and
-  Yahoo rate-limits shared egress IPs. Price loading is therefore behind a
-  provider interface: `yfinance` → direct Yahoo chart API → local CSV.
+- **Price data — not verified.** `yfinance` fails inside a TLS-terminating proxy
+  (its `curl_cffi` browser impersonation is rejected), and Yahoo rate-limits
+  shared egress IPs (`HTTP 429`). **No provider returned data from this
+  sandbox**, so real NSE price quality is still unconfirmed. Price loading is
+  behind a provider interface — `yfinance` → direct Yahoo chart API → local CSV
+  — and the surrounding logic is covered by offline tests. Re-run the probe on
+  your own machine to close this out.
 
 ### Install
 

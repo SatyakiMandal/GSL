@@ -163,6 +163,28 @@ study reproducible and testable when the network path is unavailable, which
 Section 10 asks for. Ticker/benchmark symbols verified as well-formed:
 `ADANIENT.NS`, `RELIANCE.NS`, `INFY.NS`, `^NSEI` (NIFTY 50), `^BSESN` (SENSEX).
 
+**Outcome in this container, stated plainly: no provider returned data.**
+The full probe, with backoff, ends:
+
+```
+yfinance      usable=False   ADANIENT.NS: yfinance returned no rows
+yahoo-chart   usable=False   ADANIENT.NS: HTTP 429   ^NSEI: HTTP 429
+csv           usable=False   no CSV at data/prices/ADANIENT.NS.csv
+chosen provider: None
+```
+
+So the Phase 0 question "does `yfinance` return clean data for the ticker and
+benchmark?" is answered **no — not from this sandbox**, and I have not verified
+the shape or quality of real NSE price data. What *is* verified is the code
+around it: the frame-shaping, window-slicing and provider-fallback logic is
+covered by tests that run offline against the CSV provider.
+
+This is a live risk for Phase 2, where the event-study engine needs real
+returns. The likely fix is simply running it on your machine, where neither the
+TLS-terminating proxy nor the shared-IP rate limit applies. If Yahoo stays
+unreliable there too, the fallbacks are `nsepy`/`jugaad-data` (which the PRD
+already names) or a one-time CSV export.
+
 ---
 
 ## Open questions for Phase 1
