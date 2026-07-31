@@ -7,8 +7,8 @@ unusual coverage coincided with an unusual **benchmark-adjusted** price move.
 It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
-**Status: Phase 2 complete** (feasibility spike, news ingestion and sentiment,
-event-study engine). Phase 3 (reporting) not yet built.
+**Status: all four phases complete** — feasibility spike, news ingestion and
+sentiment, event-study engine, and reporting.
 
 ---
 
@@ -257,6 +257,62 @@ Both were invisible to unit tests and only appeared when the whole pipeline ran:
    z = −16.9. The coverage test now relaxes to "has any coverage" below 10
    news-carrying days, and the output says so in bold terms rather than quietly
    changing its own bar.
+
+---
+
+## Phase 3 — Reporting
+
+Produces a **single self-contained HTML file**: no external stylesheets, scripts,
+fonts or images, so it can be emailed, committed or opened offline and still
+render. Charts are inline SVG, so they stay crisp when zoomed or printed to PDF.
+
+```bash
+python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
+  --start 2023-01-24 --end 2023-02-10 --alias Adani \
+  --html out/report.html
+```
+
+`--html ''` skips it. A report is written by default alongside the JSON.
+
+### What the report contains
+
+1. **A limitations box, before any finding** — not a footnote. Success Metric #3
+   asks that a reader who did not build the tool understands both the finding
+   *and* its limitations, so the caveats come first.
+2. **Summary narrative** — what was examined, which return model was used, and
+   what was found, in plain language.
+3. **Timeline** (three stacked panels): company vs benchmark rebased to 100;
+   abnormal return bars; news volume coloured by tone. Flagged days are marked.
+4. **Ranked incident table** with abnormal return, z, CAR and t.
+5. **Per-incident narrative** — two to four paragraphs each, plus the source
+   headlines behind the flag.
+6. **Daily detail table**, flagged rows highlighted.
+7. **Method and provenance** — price providers used, model note, timestamp
+   alignment, and per-source availability including anything disabled.
+
+### Narrative is template-based, not model-generated
+
+Every number in a sentence comes from a computed field rather than a paraphrase
+of one, and the same input produces the same prose every time — which matters for
+the traceability Section 10 asks for. Magnitude wording escalates with the
+z-score rather than the raw percentage, so a volatile stock is not called
+"extraordinary" for a move that is ordinary by its own standards.
+
+The vocabulary is constrained to what the method supports: coverage **coincided
+with** a move, never "caused", "drove" or "triggered" it. There is a test that
+scans generated narrative for causal verbs outside an explicit denial.
+
+### Three bugs the tests caught here
+
+- **`pandas.Timestamp` subclasses `datetime.date`**, so an `isinstance(x, date)`
+  guard left Timestamps unconverted and they never matched the plain dates in
+  the incident set. Incident markers on the chart and highlighting in the daily
+  table both silently disappeared. Fixed in both places and pinned by a test.
+- **The company name was interpolated into the narrative unescaped.** The
+  templates emit raw HTML (they use `<em>`/`<strong>`), so a name containing
+  markup would have been injected into the page.
+- **The "tone disagrees with price" narrative branch omitted the non-causation
+  caveat** that the agreement branch carried.
 
 ---
 

@@ -209,6 +209,8 @@ def main() -> None:
     parser.add_argument("--cache-dir", default="cache")
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     parser.add_argument("--out", default="out/analysis.json")
+    parser.add_argument("--html", default="out/report.html",
+                        help="Standalone HTML report path; --html '' to skip.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -253,6 +255,10 @@ def main() -> None:
     out_path.write_text(json.dumps(analysis.to_dict(), indent=2, default=str),
                         encoding="utf-8")
     print(f"\nwrote {out_path}")
+
+    if args.html:
+        from .report import write_report
+        print(f"wrote {write_report(analysis, args.html)}")
 
 
 if __name__ == "__main__":
