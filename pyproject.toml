@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "company-event-impact-analyzer"
+version = "1.0.0"
+description = "Aligns Indian financial-press coverage against benchmark-adjusted stock returns to surface candidate incident days."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.31",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "lxml>=5.0",
+    "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+# FinBERT. Install the CPU torch wheel to avoid pulling CUDA:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+sentiment = ["torch>=2.0", "transformers>=4.40"]
+prices = ["yfinance>=0.2.40"]
+dev = ["pytest>=7.4"]
+all = [
+    "torch>=2.0", "transformers>=4.40", "yfinance>=0.2.40", "pytest>=7.4",
+]
+
+[project.scripts]
+ceia-probe = "ceia.probe:main"
+ceia-ingest = "ceia.ingest:main"
+ceia-analyze = "ceia.analyze:main"
+
+[tool.setuptools]
+packages = ["ceia"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

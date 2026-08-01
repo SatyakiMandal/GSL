@@ -52,7 +52,21 @@ The short version:
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
+
+# CPU-only torch first, so pip does not pull the CUDA build for FinBERT.
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -e ".[all]"
+```
+
+That installs three commands: `ceia-probe`, `ceia-ingest`, `ceia-analyze`.
+They are the same entry points as `python -m ceia.probe` and friends, which
+still work without installing.
+
+Lighter installs: `pip install -e .` for scraping only, `.[sentiment]` to add
+FinBERT, `.[prices]` for `yfinance`, `.[dev]` for the tests.
+
+```bash
+pytest -q     # 166 tests, no network required
 ```
 
 ### Run the spike

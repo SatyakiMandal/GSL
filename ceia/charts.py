@@ -231,19 +231,3 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
     )
     parts.append("</svg>")
     return "".join(parts)
-
-
-def sparkline_svg(values: list[float], width: int = 120, height: int = 28) -> str:
-    """A small inline CAR trace for the incident table."""
-    if not values:
-        return ""
-    low, high = min(values), max(values)
-    span = (high - low) or 1.0
-    step = width / max(len(values) - 1, 1)
-    points = " ".join(
-        f"{i * step:.1f},{height - (v - low) / span * (height - 4) - 2:.1f}"
-        for i, v in enumerate(values)
-    )
-    css = "spark-neg" if values[-1] < 0 else "spark-pos"
-    return (f'<svg viewBox="0 0 {width} {height}" class="spark" aria-hidden="true">'
-            f'<polyline points="{points}" class="{css}"/></svg>')
