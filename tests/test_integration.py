@@ -124,6 +124,13 @@ def run_pipeline(price_dir: Path, start=date(2023, 1, 20), end=date(2023, 2, 3))
         item.sentiment_score = 0.4 if "rejects" in item.headline else -0.7
         item.sentiment_label = "positive" if item.sentiment_score > 0 else "negative"
         item.event_category = "regulatory"
+        # Stand in for GoEmotions: a plausible, deterministic label per
+        # headline shape, so the field has something real flowing through it
+        # rather than being universally blank in this test.
+        if "tank" in item.headline or "slide" in item.headline:
+            item.emotion_label = "fear"
+        elif "rejects" in item.headline:
+            item.emotion_label = "annoyance"
     analysis = analyse(config, kept, {"stats": {"unique_after_dedupe": len(kept)}},
                        providers=[CsvProvider(price_dir)], return_threshold=1.5)
     return analysis, kept, dropped
@@ -201,6 +208,19 @@ class TestEndToEnd:
         assert "coincided with" in html
         assert 'class="flagged"' in html
         assert "incident-rule" in html
+
+    def test_emotion_reaches_the_incident_and_the_rendered_report(self, prices):
+        """Full plumbing check: extraction stub -> aggregate_by_day's mode ->
+        rank_incidents' Incident.dominant_emotion -> the HTML report. The
+        Phase 2 bugs this file exists to catch were exactly this shape of
+        failure - correct in isolation, silently dropped somewhere in the
+        chain between stages."""
+        analysis, kept, _ = run_pipeline(prices)
+        top_25_jan = next(i for i in analysis.incidents if i.day == date(2023, 1, 25))
+        assert top_25_jan.dominant_emotion == "fear"
+        html = build_html(analysis)
+        assert "emotion: fear" in html
+        assert "apprehension" in html  # the narrative's phrasing for "fear"
 
     def test_json_payload_is_serialisable(self, prices):
         import json

@@ -18,7 +18,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# FinBERT. Install the CPU torch wheel to avoid pulling CUDA:
+# FinBERT (primary, finance-tuned sentiment) and GoEmotions (secondary,
+# general-purpose emotion texture) both load through transformers, so one
+# extra covers both. Install the CPU torch wheel to avoid pulling CUDA:
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
 sentiment = ["torch>=2.0", "transformers>=4.40"]
 prices = ["yfinance>=0.2.40"]

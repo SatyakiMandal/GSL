@@ -7,7 +7,7 @@ unusual coverage coincided with an unusual **benchmark-adjusted** price move.
 It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
-**Status: complete and verified on real data.** All four phases, 196 tests
+**Status: complete and verified on real data.** All four phases, 231 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -15,7 +15,8 @@ final price verification ran on a user's own machine against the same news
 corpus this repo ships: the 27 January 2023 Hindenburg-report crash flagged as
 the #1 candidate, abnormal return −17.12% (z = −8.5) alongside negative
 coverage. Full report and details in
-[`docs/validation-run.md`](docs/validation-run.md).
+[`docs/validation-run.md`](docs/validation-run.md). Sentiment is now
+complemented by a secondary GoEmotions layer — see Phase 1 below.
 
 ---
 
@@ -78,7 +79,7 @@ Lighter installs: `pip install -e .` for scraping only, `.[sentiment]` to add
 FinBERT, `.[prices]` for `yfinance`, `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 196 tests, no network required
+pytest -q     # 231 tests, no network required
 ```
 
 ### Run the spike
@@ -160,9 +161,10 @@ python -m ceia.ingest \
   --out out/adani_jan2023.json
 ```
 
-Useful flags: `--limit N` (cap fetches for a trial run), `--skip-sentiment` (no
-model download), `--min-relevance` (default 0.35), `--min-interval` (seconds
-between requests to one origin, default 2), `--sources`.
+Useful flags: `--limit N` (cap fetches for a trial run), `--skip-sentiment` /
+`--skip-emotion` (skip either model independently — no download), `--min-relevance`
+(default 0.35), `--min-interval` (seconds between requests to one origin,
+default 2), `--sources`.
 
 Output is JSON: run config, per-source status, counts, and every item with its
 timestamp, trading-day attribution, relevance score, sentiment and event tag.
@@ -177,6 +179,7 @@ timestamp, trading-day attribution, relevance score, sentiment and event tag.
 | Dedupe | `ceia/dedupe.py` | Marks syndicated wire copy across outlets |
 | Alignment | `ceia/align.py` | Publish time → trading day, honouring the 15:30 IST close |
 | Sentiment | `ceia/sentiment.py` | FinBERT + coarse event category |
+| Emotion | `ceia/emotion.py` | GoEmotions — secondary, general-purpose emotional texture |
 | Orchestration | `ceia/ingest.py` | Wires it together; CLI |
 
 ### Verified run
@@ -218,6 +221,52 @@ are split and averaged by confidence so a reversal late in a story is not lost.
 in page furniture on every article, so a marker only counts as a paywall when the
 body is also too short to analyse. Gated items fall back to headline + snippet,
 which is what the PRD sanctions. Nothing tries to get around a gate.
+
+### Emotion (GoEmotions) — secondary texture, not a second vote
+
+FinBERT's finance-tuned positive/negative score is what drives incident
+detection and the abnormal-return direction check; that pathway is unchanged
+and remains the one verified against real prices in
+[`docs/validation-run.md`](docs/validation-run.md). **GoEmotions** adds a
+second, independent read of each headline — fear, anger, disapproval,
+approval, and 24 other labels from the Demszky et al. (2020) taxonomy — shown
+alongside FinBERT's tone, never in place of it.
+
+**It is honestly a domain mismatch, and testing against real headlines proved
+it plainly.** GoEmotions was trained on Reddit comments, and financial-press
+prose carries none of the informal markers (exclamations, first-person voice)
+the model keys on: on a real sample, raw top-label confidence for "neutral"
+ran 69–93%. Reporting that as "the emotion" would have made the field
+decorative noise, so **`neutral` is excluded from consideration entirely** —
+FinBERT's own tone already owns that concept — and the best *non-neutral*
+label is reported instead, only when it clears a 30% confidence floor. On the
+committed validation corpus (137 real headlines) that surfaces a label for
+**8%** of items. Low, but genuine: a rejection-of-allegations headline scored
+disapproval 0.40, an FPO-success headline scored approval 0.32, both while
+"neutral" led the raw output on each. The other 92% stay silent rather than
+being forced to a guess.
+
+**A concrete payoff.** In the validation run, the day after Adani Enterprises
+withdrew its FPO — where FinBERT already flags the price/tone relationship as
+"opposite" because that day's coverage skewed unexpectedly positive — GoEmotions
+independently corroborates it: the dominant headline emotion that day is
+**approval**, even as the stock fell 28%. Two independently-trained models agreeing
+that the coverage read positively despite the crash is stronger evidence than
+either alone.
+
+**A real, pre-existing bug this surfaced.** The "dominant" label for a tied day
+(e.g. one item each of two different emotions) was picked with
+`max(set(x), key=x.count)`, whose tie-break depends on `set` iteration order —
+which for `str` keys depends on Python's per-process hash randomisation.
+Verified directly: the identical tied input returned different "dominant"
+labels across nine different `PYTHONHASHSEED` values. That means the exact same
+scored data could report a different incident label on every run, which is
+exactly the kind of silent non-reproducibility this project has otherwise gone
+out of its way to avoid (provenance hashes, deterministic templates, cached
+fetches). Fixed with `collections.Counter.most_common()`, which is documented
+to break ties by first-encountered order — deterministic, because the input
+order already is. This bug pre-dated the emotion feature (it already affected
+`dominant_event`); adding a second mode computation is what surfaced it.
 
 ---
 

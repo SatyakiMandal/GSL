@@ -39,6 +39,39 @@ _EVENT_PHRASES = {
     "": "company news",
 }
 
+# GoEmotions labels, worded for prose. This is a secondary, general-purpose
+# signal (see ceia/emotion.py) - it never changes what a paragraph concludes,
+# only adds a clause naming the flavour of the tone FinBERT already scored.
+_EMOTION_PHRASES = {
+    "anger": "anger",
+    "annoyance": "irritation",
+    "disapproval": "disapproval",
+    "disgust": "disgust",
+    "disappointment": "disappointment",
+    "fear": "apprehension",
+    "nervousness": "nervousness",
+    "sadness": "a subdued, downbeat register",
+    "grief": "a distinctly grave register",
+    "embarrassment": "embarrassment",
+    "remorse": "an apologetic register",
+    "confusion": "confusion",
+    "surprise": "surprise",
+    "curiosity": "curiosity",
+    "realization": "a sense of new facts coming to light",
+    "admiration": "admiration",
+    "approval": "approval",
+    "optimism": "optimism",
+    "excitement": "excitement",
+    "relief": "relief",
+    "pride": "pride",
+    "gratitude": "gratitude",
+    "joy": "a notably upbeat register",
+    "amusement": "a wry or amused register",
+    "caring": "a sympathetic register",
+    "desire": "anticipation",
+    "love": "warmth",
+}
+
 
 def _band(z: float) -> str:
     magnitude = abs(z)
@@ -95,13 +128,24 @@ def incident_narrative(incident: Incident, company: str, benchmark: str,
     # 2. What was being written.
     topic = _EVENT_PHRASES.get(incident.dominant_event, "company news")
     outlets = len(incident.sources)
-    paragraphs.append(
+    sentence = (
         f"{incident.item_count} distinct {_plural(incident.item_count, 'item')} of "
         f"coverage {_plural(incident.item_count, 'was', 'were')} attributed to this "
         f"trading day, across {outlets} {_plural(outlets, 'outlet')}, mostly "
         f"concerning {topic}. The overall tone was {_tone(incident.mean_sentiment)} "
         f"(score {incident.mean_sentiment:+.2f} on a −1 to +1 scale)."
     )
+    emotion_phrase = _EMOTION_PHRASES.get(incident.dominant_emotion)
+    if emotion_phrase:
+        # A separate, general-purpose model (GoEmotions), not FinBERT - worded
+        # as a headline-level read, distinct from the tone score above it,
+        # rather than as a second vote on the same claim.
+        sentence += (
+            f" Read against a general-purpose emotion model rather than the "
+            f"finance-tuned sentiment score above, the headlines themselves "
+            f"leaned toward {emotion_phrase}."
+        )
+    paragraphs.append(sentence)
 
     # 3. Whether tone and price agree — and what that does and does not mean.
     if incident.direction_agrees:

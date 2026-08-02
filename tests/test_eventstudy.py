@@ -27,11 +27,12 @@ from ceia.returns import MarketModel, abnormal_returns, daily_returns  # noqa: E
 
 def item(day: date, sentiment: float, *, url="u", source="et", headline="h",
          relevance=0.9, duplicate_of=None, event="other",
-         after_close=False) -> NewsItem:
+         after_close=False, emotion="") -> NewsItem:
     news = NewsItem(source=source, url=url, headline=headline,
                     published_at=datetime(day.year, day.month, day.day, 10, 0, tzinfo=IST),
                     sentiment_score=sentiment, relevance_score=relevance,
-                    event_category=event, after_close=after_close)
+                    event_category=event, after_close=after_close,
+                    emotion_label=emotion)
     news.trading_day = day
     news.duplicate_of = duplicate_of
     news.sentiment_label = ("positive" if sentiment > 0.15
@@ -86,6 +87,69 @@ class TestAggregation:
             item(day, -0.5, url="c", event="earnings"),
         ])[day]
         assert coverage.dominant_event == "regulatory"
+
+    def test_dominant_emotion_is_the_mode(self):
+        day = date(2023, 1, 25)
+        coverage = aggregate_by_day([
+            item(day, -0.5, url="a", emotion="fear"),
+            item(day, -0.5, url="b", emotion="fear"),
+            item(day, -0.5, url="c", emotion="anger"),
+        ])[day]
+        assert coverage.dominant_emotion == "fear"
+
+    def test_dominant_emotion_blank_when_nothing_cleared_threshold(self):
+        """Items where GoEmotions stayed silent must not force a label."""
+        day = date(2023, 1, 25)
+        coverage = aggregate_by_day([
+            item(day, -0.5, url="a", emotion=""),
+            item(day, -0.5, url="b", emotion=""),
+        ])[day]
+        assert coverage.dominant_emotion == ""
+
+    def test_dominant_emotion_ignores_items_with_no_label(self):
+        """A day with one confident emotion and one blank still surfaces the
+        confident one, rather than being diluted to nothing."""
+        day = date(2023, 1, 25)
+        coverage = aggregate_by_day([
+            item(day, -0.5, url="a", emotion="fear"),
+            item(day, -0.5, url="b", emotion=""),
+        ])[day]
+        assert coverage.dominant_emotion == "fear"
+
+    def test_tied_dominant_labels_break_deterministically_by_first_seen(self):
+        """A real bug this pins: max(set(x), key=x.count) breaks a tied count
+        via Python's per-process string hash randomisation, so the same tied
+        input could report a different "dominant" label on every run -
+        verified directly across nine different PYTHONHASHSEED values before
+        the fix. Counter.most_common() is documented to break ties by
+        first-encountered order instead, which is deterministic because the
+        input order already is.
+        """
+        day = date(2023, 1, 25)
+        # "curiosity" first, "disappointment" second, tied 1-1: this exact
+        # pair previously landed on "curiosity" under some hash seeds and
+        # "disappointment" under others.
+        coverage = aggregate_by_day([
+            item(day, -0.5, url="a", emotion="curiosity"),
+            item(day, -0.5, url="b", emotion="disappointment"),
+        ])[day]
+        assert coverage.dominant_emotion == "curiosity"
+
+        reversed_order = aggregate_by_day([
+            item(day, -0.5, url="a", emotion="disappointment"),
+            item(day, -0.5, url="b", emotion="curiosity"),
+        ])[day]
+        assert reversed_order.dominant_emotion == "disappointment"
+
+    def test_tied_dominant_event_breaks_deterministically_too(self):
+        """The same fix applies to dominant_event, which had the identical
+        bug pattern before dominant_emotion was added."""
+        day = date(2023, 1, 25)
+        coverage = aggregate_by_day([
+            item(day, -0.5, url="a", event="earnings"),
+            item(day, -0.5, url="b", event="regulatory"),
+        ])[day]
+        assert coverage.dominant_event == "earnings"
 
     def test_weighted_sentiment_favours_widely_carried_stories(self):
         day = date(2023, 1, 25)
@@ -167,6 +231,24 @@ class TestRanking:
         top = rank_incidents(table, frame, return_threshold=1.0)[0]
         assert top.direction_agrees, "negative tone with a negative abnormal return"
         assert top.mean_sentiment < 0 and top.abnormal_return < 0
+
+    def test_dominant_emotion_propagates_onto_the_incident(self):
+        days = [date(2023, 1, d) for d in (23, 24, 25, 27, 30)]
+        frame = price_frame({
+            days[0]: (0.005, 0.004), days[1]: (0.002, 0.003),
+            days[2]: (-0.20, -0.01), days[3]: (-0.02, -0.015), days[4]: (0.01, 0.005),
+        })
+        news = [item(days[2], -0.9, url=f"n{i}", event="regulatory", emotion="fear")
+                for i in range(6)]
+        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
+        top = rank_incidents(table, frame, return_threshold=1.0)[0]
+        assert top.dominant_emotion == "fear"
+
+    def test_blank_dominant_emotion_when_goemotions_was_skipped(self):
+        """--skip-emotion runs must still flag incidents; the field is just ''."""
+        frame, table, news, days = self._setup()  # no emotion set on these items
+        top = rank_incidents(table, frame, return_threshold=1.0)[0]
+        assert top.dominant_emotion == ""
 
     def test_quiet_days_never_flag(self):
         frame, table, news, days = self._setup()

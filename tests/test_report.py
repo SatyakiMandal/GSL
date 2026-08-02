@@ -40,7 +40,8 @@ def make_incident(**kwargs) -> Incident:
         day=date(2023, 1, 25), abnormal_return=-0.1323, abnormal_return_z=-12.53,
         raw_return=-0.1379, benchmark_return=-0.0049, coverage_z=1.2,
         sentiment_z=-1.1, item_count=3, mean_sentiment=-0.42,
-        dominant_event="regulatory", score=19.1, direction_agrees=True,
+        dominant_event="regulatory", dominant_emotion="fear", score=19.1,
+        direction_agrees=True,
         car={"car": -0.3034, "days": 5, "start": "2023-01-24",
              "end": "2023-01-30", "t_stat": -12.84, "truncated": False, "note": ""},
         headlines=["[business_line] Adani shares tank (negative, rel=1.00)"],
@@ -97,6 +98,42 @@ def make_analysis(incidents=None, unattributed=None, daily=None) -> FakeAnalysis
                  "causal finding."],
         unattributed=unattributed or [],
     )
+
+
+class TestEmotionInNarrative:
+    def test_dominant_emotion_is_named_and_attributed_to_the_right_model(self):
+        text = " ".join(incident_narrative(
+            make_incident(dominant_emotion="fear"), "X", "^NSEI", (-1, 3)))
+        assert "apprehension" in text
+        assert "general-purpose emotion model" in text
+        # Must not read as a second vote on the same sentiment claim.
+        assert "finance-tuned sentiment score above" in text
+
+    def test_blank_dominant_emotion_adds_nothing(self):
+        """--skip-emotion runs, or a day with no confident label, must not
+        fabricate an emotion sentence."""
+        text = " ".join(incident_narrative(
+            make_incident(dominant_emotion=""), "X", "^NSEI", (-1, 3)))
+        assert "general-purpose emotion model" not in text
+
+    def test_unknown_label_is_handled_gracefully(self):
+        """Defensive: an emotion label outside the known phrase table (e.g. a
+        future GoEmotions version) must not crash narrative generation."""
+        text = " ".join(incident_narrative(
+            make_incident(dominant_emotion="not_a_real_label"), "X", "^NSEI", (-1, 3)))
+        assert "general-purpose emotion model" not in text
+
+    def test_never_claims_causation(self):
+        """The emotion clause must obey the same non-causal vocabulary rule
+        as the rest of the narrative."""
+        text = " ".join(incident_narrative(
+            make_incident(dominant_emotion="anger"), "X", "^NSEI", (-1, 3)))
+        for sentence in re.split(r"(?<=[.!?])\s+", text):
+            if re.search(r"\b(?:cannot|can not|not|never|no)\b", sentence, re.I):
+                continue
+            for pattern in CAUSAL_WORDS:
+                assert not re.search(pattern, sentence, re.I), \
+                    f"causal phrasing {pattern!r} in: {sentence!r}"
 
 
 class TestNarrative:
@@ -258,6 +295,36 @@ class TestHtmlReport:
 
     def test_finbert_disclosed(self):
         assert "FinBERT" in build_html(make_analysis())
+
+    def test_goemotions_disclosed_as_secondary_and_not_finance_tuned(self):
+        html = build_html(make_analysis())
+        assert "GoEmotions" in html
+        assert "not</strong> a\nfinance-tuned model" in html or \
+            "not</strong> a finance-tuned model" in html
+        assert "never affects relevance, incident\nflagging" in html or \
+            "never affects relevance, incident flagging" in html
+
+    def test_incident_card_shows_emotion_tag_when_present(self):
+        html = build_html(make_analysis(incidents=[make_incident(dominant_emotion="fear")]))
+        assert "emotion: fear" in html
+
+    def test_incident_card_omits_emotion_tag_when_blank(self):
+        html = build_html(make_analysis(incidents=[make_incident(dominant_emotion="")]))
+        assert "emotion:" not in html
+
+    def test_incident_table_has_an_emotion_column(self):
+        html = build_html(make_analysis(incidents=[make_incident(dominant_emotion="anger")]))
+        body = html.split("<h2>Candidate incident days</h2>")[1]
+        body = body.split("<h2>")[0]
+        assert "Emotion" in body
+        assert ">anger<" in body
+
+    def test_emotion_tag_is_escaped(self):
+        """dominant_emotion ultimately traces back to a headline; treat it as
+        untrusted the same way the rest of the report does."""
+        html = build_html(make_analysis(
+            incidents=[make_incident(dominant_emotion='<script>evil</script>')]))
+        assert "<script>evil</script>" not in html
 
     def test_daily_table_has_a_row_per_day(self):
         html = build_html(make_analysis())

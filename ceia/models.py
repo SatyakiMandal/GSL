@@ -45,6 +45,13 @@ class NewsItem:
     sentiment_confidence: float = 0.0
     event_category: str = ""
 
+    # Set by the emotion tagger (GoEmotions) - a secondary, general-purpose
+    # signal read alongside sentiment_label, never a substitute for it. Empty
+    # when no emotion cleared the confidence threshold (see ceia/emotion.py).
+    emotion_label: str = ""
+    emotion_score: float = 0.0
+    emotion_secondary: list[str] = field(default_factory=list)
+
     # Set by the trading-day aligner.
     trading_day: date | None = None
     after_close: bool = False

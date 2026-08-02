@@ -29,6 +29,7 @@ from .discovery import Candidate, discover
 from .extract import parse_article
 from .extract import IST
 from .fetcher import DEFAULT_USER_AGENT, Fetcher, RobotsDisallowed
+from .emotion import GoEmotionScorer
 from .models import NewsItem, RunConfig
 from .sentiment import FinBertScorer
 
@@ -181,8 +182,10 @@ def fetch_and_parse(fetcher: Fetcher, candidates: list[Candidate],
 
 def run(config: RunConfig, fetcher: Fetcher | None = None,
         scorer: FinBertScorer | None = None,
+        emotion_scorer: GoEmotionScorer | None = None,
         limit: int | None = None,
-        skip_sentiment: bool = False) -> IngestResult:
+        skip_sentiment: bool = False,
+        skip_emotion: bool = False) -> IngestResult:
     fetcher = fetcher or Fetcher()
     sources = [s for s in (config.sources or DEFAULT_SOURCES) if s not in DISABLED_SOURCES]
     result = IngestResult(config=config, disabled_sources=dict(DISABLED_SOURCES))
@@ -212,6 +215,12 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
 
     if not skip_sentiment and unique_items:
         (scorer or FinBertScorer()).score_items(unique_items)
+
+    # Emotion runs independently of sentiment: a user who wants FinBERT's
+    # finance-tuned score but not a second ~500MB model download should be
+    # able to skip this one without giving up the one that drives ranking.
+    if not skip_emotion and unique_items:
+        (emotion_scorer or GoEmotionScorer()).score_items(unique_items)
 
     per_source: dict[str, int] = {}
     for item in kept:
@@ -252,6 +261,10 @@ def main() -> None:
                         help="Cap articles fetched; useful for a quick trial run.")
     parser.add_argument("--skip-sentiment", action="store_true",
                         help="Skip FinBERT (no model download).")
+    parser.add_argument("--skip-emotion", action="store_true",
+                        help="Skip GoEmotions (no model download). FinBERT "
+                             "sentiment, which drives incident ranking, is "
+                             "unaffected either way.")
     parser.add_argument("--cache-dir", default="cache")
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     parser.add_argument("--min-interval", type=float, default=2.0)
@@ -273,7 +286,8 @@ def main() -> None:
     fetcher = Fetcher(cache_dir=args.cache_dir, user_agent=args.user_agent,
                       min_interval=args.min_interval)
     result = run(config, fetcher=fetcher, limit=args.limit,
-                 skip_sentiment=args.skip_sentiment)
+                 skip_sentiment=args.skip_sentiment,
+                 skip_emotion=args.skip_emotion)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -300,8 +314,9 @@ def main() -> None:
         for item in sorted(kept, key=lambda i: -i.relevance_score)[:10]:
             when = item.published_at.strftime("%Y-%m-%d %H:%M") if item.published_at else "?"
             flag = " [after close]" if item.after_close else ""
+            emotion = f", {item.emotion_label}" if item.emotion_label else ""
             print(f"  {item.relevance_score:.2f} {when}{flag} [{item.source}] "
-                  f"{item.sentiment_label or '-'}/{item.event_category or '-'}")
+                  f"{item.sentiment_label or '-'}/{item.event_category or '-'}{emotion}")
             print(f"        {item.headline[:96]}")
     print(f"\nwrote {out_path}")
     print("\nNOTE: coverage and price moves that coincide are not evidence of "

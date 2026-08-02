@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import date
 
@@ -53,6 +54,7 @@ class DailyCoverage:
     min_sentiment: float = 0.0
     max_sentiment: float = 0.0
     dominant_event: str = ""
+    dominant_emotion: str = ""
     headlines: list[str] = field(default_factory=list)
     after_close_count: int = 0
 
@@ -69,6 +71,7 @@ class Incident:
     item_count: int
     mean_sentiment: float
     dominant_event: str
+    dominant_emotion: str
     score: float
     direction_agrees: bool
     car: dict = field(default_factory=dict)
@@ -125,9 +128,28 @@ def aggregate_by_day(items: list[NewsItem]) -> dict[date, DailyCoverage]:
         coverage.weighted_sentiment = float(
             sum(s * w for s, w in zip(scores, weights)) / total)
 
+        # Counter.most_common() rather than max(set(x), key=x.count): the
+        # latter breaks a tied count via set iteration order, which for str
+        # keys depends on Python's per-process hash randomisation (verified
+        # directly - the same tied input returned different "dominant"
+        # labels across nine different PYTHONHASHSEED values). That would
+        # have meant a day with two items each carrying a different label
+        # could report a different "dominant" event or emotion on every run
+        # of identical data, undermining the reproducibility the rest of the
+        # pipeline works hard for. Counter.most_common() is documented to
+        # break ties by first-encountered order, which is deterministic
+        # given the (already deterministic) order items were collected in.
         categories = [i.event_category for i in unique_items if i.event_category]
         if categories:
-            coverage.dominant_event = max(set(categories), key=categories.count)
+            coverage.dominant_event = Counter(categories).most_common(1)[0][0]
+
+        # Same mode approach as dominant_event, but only over items where an
+        # emotion actually cleared the confidence threshold - a day where
+        # GoEmotions stayed silent on every headline should not be forced
+        # into an arbitrary label.
+        emotions = [i.emotion_label for i in unique_items if i.emotion_label]
+        if emotions:
+            coverage.dominant_emotion = Counter(emotions).most_common(1)[0][0]
     return by_day
 
 
@@ -162,6 +184,7 @@ def build_daily_table(
             "mean_sentiment": day_coverage.mean_sentiment if day_coverage else 0.0,
             "weighted_sentiment": day_coverage.weighted_sentiment if day_coverage else 0.0,
             "dominant_event": day_coverage.dominant_event if day_coverage else "",
+            "dominant_emotion": day_coverage.dominant_emotion if day_coverage else "",
             "sources": ",".join(day_coverage.sources) if day_coverage else "",
         })
     if not rows:
@@ -171,8 +194,8 @@ def build_daily_table(
         empty = pd.DataFrame(columns=[
             "close", "return", "benchmark_return", "expected_return",
             "abnormal_return", "abnormal_return_z", "item_count", "unique_count",
-            "mean_sentiment", "weighted_sentiment", "dominant_event", "sources",
-            "coverage_z", "sentiment_z",
+            "mean_sentiment", "weighted_sentiment", "dominant_event",
+            "dominant_emotion", "sources", "coverage_z", "sentiment_z",
         ])
         empty.index.name = "date"
         return empty
@@ -252,6 +275,7 @@ def rank_incidents(
             item_count=int(row["unique_count"]),
             mean_sentiment=float(sentiment),
             dominant_event=str(row["dominant_event"]),
+            dominant_emotion=str(row["dominant_emotion"]),
             score=float(score),
             direction_agrees=agrees,
             car=cumulative_abnormal_return(frame, day, event_window),

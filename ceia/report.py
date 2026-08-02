@@ -168,7 +168,8 @@ def _incident_table(incidents: list[Incident], window: tuple[int, int]) -> str:
             f"{_pct(car_value) if car_value is not None else '—'}</td>"
             f"<td>{f'{t_stat:.2f}' if t_stat is not None else '—'}</td>"
             f'<td class="txt">{"consistent" if inc.direction_agrees else "opposite"}</td>'
-            f'<td class="txt">{escape(inc.dominant_event or "—")}</td></tr>'
+            f'<td class="txt">{escape(inc.dominant_event or "—")}</td>'
+            f'<td class="txt">{escape(inc.dominant_emotion or "—")}</td></tr>'
         )
     before, after = window
     return (
@@ -176,6 +177,7 @@ def _incident_table(incidents: list[Incident], window: tuple[int, int]) -> str:
         "<th>#</th><th>Date</th><th>Abnormal return</th><th>z</th><th>Items</th>"
         f"<th>Tone</th><th>CAR[{before},+{after}]</th><th>t</th>"
         '<th class="txt">Tone vs price</th><th class="txt">Main topic</th>'
+        '<th class="txt">Emotion*</th>'
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
     )
 
@@ -203,7 +205,10 @@ def _incident_sections(incidents: list[Incident], company: str, benchmark: str,
             f'<div><span class="tag">abnormal {_pct(inc.abnormal_return)}</span>'
             f'<span class="tag">z {inc.abnormal_return_z:+.1f}</span>'
             f'<span class="tag">{inc.item_count} item(s)</span>'
-            f'<span class="tag">{escape(inc.dominant_event or "other")}</span></div>'
+            f'<span class="tag">{escape(inc.dominant_event or "other")}</span>'
+            + (f'<span class="tag">emotion: {escape(inc.dominant_emotion)}</span>'
+               if inc.dominant_emotion else "")
+            + "</div>"
             f"{paragraphs}{source_block}</div>"
         )
     return "".join(blocks)
@@ -312,7 +317,9 @@ each trading day, coloured by tone. Dashed vertical lines mark flagged days.</p>
 
 <h2>Candidate incident days</h2>
 <p>Ranked by the combination of an unusual abnormal return and notable coverage.
-The ranking orders days for attention; it is not a significance test.</p>
+The ranking orders days for attention; it is not a significance test.
+<em>*Emotion</em> is a secondary, general-purpose signal (GoEmotions) read
+alongside tone, not a substitute for it — see Method and provenance below.</p>
 {_incident_table(incidents, config.event_window)}
 {_incident_sections(incidents, safe_company, safe_benchmark, config.event_window)}
 
@@ -334,7 +341,17 @@ attributed to the <em>next</em> trading day, since it could not have moved that 
 close. {news_stats.get('after_close', 0)} of the collected items fell after the close.</p>
 <p><strong>Sentiment.</strong> Scored with FinBERT, a finance-tuned model, rather than a
 general-purpose sentiment library — ordinary financial phrasing such as "beat
-expectations but missed guidance" is read incorrectly by generic tools.</p>
+expectations but missed guidance" is read incorrectly by generic tools. This
+score is what drives incident detection and the abnormal-return-direction
+check above.</p>
+<p><strong>Emotion.</strong> A secondary tag from GoEmotions (Demszky et al.,
+2020), a 27-emotion model trained on Reddit comments — <strong>not</strong> a
+finance-tuned model, and reading formal financial-press prose is a genuine
+domain mismatch. It is included as texture (fear vs. anger vs. disapproval
+alongside a shared "negative" FinBERT score can distinguish, say, a regulatory
+probe from a hostile FPO withdrawal) and never affects relevance, incident
+flagging, or the direction check. Scored on the headline only, and left blank
+below a 30% confidence threshold rather than forced to a low-confidence guess.</p>
 </div>
 
 <h3>Source availability</h3>
