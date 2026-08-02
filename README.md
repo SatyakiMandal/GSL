@@ -7,13 +7,15 @@ unusual coverage coincided with an unusual **benchmark-adjusted** price move.
 It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
-**Status: complete** — feasibility spike, news ingestion and sentiment,
-event-study engine, and reporting. 191 tests passing.
-
-One thing is deliberately unclaimed: **no run has used real price data.** Every
-provider was unreachable from the build environment. The news half is verified
-against live sources; the price half is verified against synthetic series with
-known parameters. See [`docs/validation-run.md`](docs/validation-run.md).
+**Status: complete and verified on real data.** All four phases, 196 tests
+passing, and PRD Success Metric #2 — a known incident correctly flagged with
+the abnormal-return direction matching sentiment — is met. `yfinance` could
+not be reached from the build sandbox (a TLS-terminating proxy broke it), so
+final price verification ran on a user's own machine against the same news
+corpus this repo ships: the 27 January 2023 Hindenburg-report crash flagged as
+the #1 candidate, abnormal return −17.12% (z = −8.5) alongside negative
+coverage. Full report and details in
+[`docs/validation-run.md`](docs/validation-run.md).
 
 ---
 
@@ -49,13 +51,14 @@ The short version:
   closed and skips it. Getting through would require defeating bot detection,
   which this project does not do; see the findings doc for legitimate
   alternatives (licensed access, or substituting Mint/Moneycontrol).
-- **Price data — not verified.** `yfinance` fails inside a TLS-terminating proxy
-  (its `curl_cffi` browser impersonation is rejected), and Yahoo rate-limits
-  shared egress IPs (`HTTP 429`). **No provider returned data from this
-  sandbox**, so real NSE price quality is still unconfirmed. Price loading is
-  behind a provider interface — `yfinance` → direct Yahoo chart API → local CSV
-  — and the surrounding logic is covered by offline tests. Re-run the probe on
-  your own machine to close this out.
+- **Price data — verified, but not from this build environment.** `yfinance`
+  fails inside a TLS-terminating proxy (its `curl_cffi` browser impersonation is
+  rejected) and Yahoo rate-limits the sandbox's shared egress IP (`HTTP 429`).
+  Neither problem is specific to `yfinance` itself: run unproxied, on an
+  ordinary connection, it worked immediately and produced the real result in
+  [`docs/validation-run.md`](docs/validation-run.md). Price loading stays
+  behind a provider interface — `yfinance` → Yahoo chart API → Alpha Vantage →
+  local CSV — so a blocked provider degrades rather than stops the run.
 
 ### Install
 
@@ -75,7 +78,7 @@ Lighter installs: `pip install -e .` for scraping only, `.[sentiment]` to add
 FinBERT, `.[prices]` for `yfinance`, `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 191 tests, no network required
+pytest -q     # 196 tests, no network required
 ```
 
 ### Run the spike

@@ -285,3 +285,26 @@ class TestTimestampIndexHandling:
         svg = timeline_svg(analysis.daily, {date(2023, 1, 25)}, "X", "^NSEI")
         assert "incident-rule" in svg
         assert "bar-incident" in svg
+
+
+class TestModelNotePunctuation:
+    """model_note values from returns.py have no terminal punctuation, and ran
+    straight into "Prices came from..." with no separator. A real user's
+    report showed: "fitted on 120 trading days before 2023-01-20 Prices came
+    from yfinance..." with no full stop between them.
+    """
+
+    def test_period_added_when_missing(self):
+        from ceia.report import _sentence
+        assert _sentence("fitted on 120 trading days before 2023-01-20") == \
+            "fitted on 120 trading days before 2023-01-20."
+
+    def test_existing_punctuation_not_doubled(self):
+        from ceia.report import _sentence
+        assert _sentence("already ends with a period.") == "already ends with a period."
+        assert _sentence("ends with a question?") == "ends with a question?"
+
+    def test_appears_correctly_in_the_report(self):
+        html = build_html(make_analysis())
+        assert "days\nPrices came from" not in html  # old bug shape: no period
+        assert "fitted on 120 days.\nPrices came from" in html

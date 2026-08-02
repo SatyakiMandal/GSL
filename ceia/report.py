@@ -91,6 +91,17 @@ code{background:var(--plot);padding:1px 5px;border-radius:4px;font-size:.87em}
 """
 
 
+def _sentence(text: str) -> str:
+    """Ensure a fragment ends with terminal punctuation before it is followed
+    by more prose. ``model_note`` values (e.g. "fitted on 120 trading days
+    before 2023-01-20") have none, which ran straight into the next sentence
+    with no separator."""
+    text = text.strip()
+    if text and text[-1] not in ".!?":
+        text += "."
+    return text
+
+
 def _cls(value: float) -> str:
     return "pos" if value > 0 else "neg" if value < 0 else ""
 
@@ -313,7 +324,7 @@ The ranking orders days for attention; it is not a significance test.</p>
 
 <h2>Method and provenance</h2>
 <div class="card">
-<p><strong>Abnormal return.</strong> {escape(str(price.get('model_note', '')))}
+<p><strong>Abnormal return.</strong> {escape(_sentence(price.get('model_note', '')))}
 Prices came from <code>{escape(str(price.get('company_provider', '?')))}</code>
 (company) and <code>{escape(str(price.get('benchmark_provider', '?')))}</code>
 (benchmark). Abnormal returns are standardised against the

@@ -5,14 +5,50 @@ exercise the **strict** incident test — the one that requires coverage to be
 statistically unusual, not merely present — and to check the relevance filter
 against a real corpus rather than a handful of articles.
 
-## What is real here and what is not
+## Update: Success Metric #2 is met on real data
+
+The section below records the original run, made with a synthetic price
+series because no price provider was reachable from the build sandbox. That
+gap is now closed: a user ran the identical news corpus
+(`data/adani_wide_2023.json`) against **real `yfinance` data** on their own
+machine — `yfinance` failed only inside the build sandbox's TLS-terminating
+proxy, and works normally on an unproxied connection. The full report is
+saved at
+[`docs/evidence/verified-run-2023-01-20_2023-02-17.html`](evidence/verified-run-2023-01-20_2023-02-17.html).
+
+**PRD Success Metric #2** — "at least one previously known incident ...
+correctly flagged as a top candidate, with the abnormal return direction
+matching the sentiment direction" — **is met**. The #1-ranked candidate is
+**27 January 2023**: abnormal return −17.12% (z = −8.5), 26 news items with
+negative tone (−0.29), tagged "consistent." This is the real Hindenburg
+Research crash — the report was published 24 January, and by that Friday
+Adani Enterprises had fallen 18.5% (17.1 points of it company-specific, once
+the market-wide −1.6% that day is subtracted out). The tool identified the
+correct day, ranked it first among four candidates, and got the direction
+right.
+
+The #2-ranked candidate, **1 February 2023** (abnormal return −28.21%,
+z = −14.0), is arguably the more informative result. That is the day after
+Adani Enterprises **withdrew its fully-subscribed ₹20,000 crore FPO**, and
+the tool tags it "opposite": the day's collected coverage skewed neutral
+(FPO-success and AI-lab stories), not negative, because same-day coverage of
+the withdrawal itself was thin in this window. The report states the
+disagreement rather than hiding it — this is the intended behaviour for a day
+where the news the tool captured doesn't fully explain the move, not a
+failure of the method.
+
+## Original run (synthetic prices) — kept for what it demonstrated about ingestion
+
+## What is real here and what is not, in the original run
 
 | Component | Status |
 |---|---|
 | News collection, extraction, relevance, dedupe, attribution, sentiment | **Real.** 200 articles fetched from the four live sources. |
-| Prices, returns, abnormal returns, CAR | **Synthetic.** No live NSE feed was reachable. |
+| Prices, returns, abnormal returns, CAR | **Synthetic** in this section only — see the real run above. |
 
-The incident days below are therefore **not findings about Adani Enterprises**.
+The incident days in the rest of this document used a synthetic price series
+and are **not findings about Adani Enterprises** on their own; see the update
+above for the real result.
 The price series was generated with shocks placed on chosen dates, so the
 returns are fiction. What the run demonstrates is that the pipeline behaves
 correctly on a real news distribution.

@@ -157,11 +157,17 @@ class AlphaVantageProvider(PriceProvider):
     """Alpha Vantage daily series, keyed from ``ALPHAVANTAGE_API_KEY``.
 
     The PRD puts Alpha Vantage out of scope for v1 because it was proposed for
-    *global* coverage. It is included here for a different reason: it is the one
-    price host reachable from environments where Yahoo rate-limits the egress IP
-    and the NSE/BSE sites return 403. Free keys cover NSE (``SYMBOL.BSE`` /
-    ``SYMBOL.NSE``) at 25 requests/day, which is ample for one company plus a
-    benchmark.
+    *global* coverage. It is included here for a different reason: it is
+    reachable from environments where Yahoo rate-limits the egress IP and the
+    NSE/BSE sites return 403.
+
+    As of testing, Alpha Vantage's free tier has gated ``outputsize=full`` on
+    ``TIME_SERIES_DAILY`` behind a paid plan, so a free key can no longer pull
+    the multi-year history this tool needs for an arbitrary historical date
+    range (``outputsize=compact`` only returns the most recent ~100 sessions
+    counted back from *today*, which does not reach a window like January
+    2023 once enough time has passed). Kept as a fallback for whichever date
+    ranges it can still serve; prefer ``yfinance`` where it is reachable.
     """
 
     name = "alphavantage"
