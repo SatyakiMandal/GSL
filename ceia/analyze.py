@@ -236,12 +236,16 @@ def main() -> None:
               + ("" if match.exact_exchange_match
                  else f" -- not listed on {args.exchange}, using nearest match"))
 
-    config = RunConfig(
-        company=args.company, ticker=ticker, benchmark=args.benchmark,
-        start=date.fromisoformat(args.start), end=date.fromisoformat(args.end),
-        aliases=args.alias, event_window=tuple(args.event_window),
-        min_relevance=args.min_relevance,
-    )
+    try:
+        config = RunConfig(
+            company=args.company, ticker=ticker, benchmark=args.benchmark,
+            start=date.fromisoformat(args.start), end=date.fromisoformat(args.end),
+            aliases=args.alias, event_window=tuple(args.event_window),
+            min_relevance=args.min_relevance,
+        )
+    except ValueError as exc:
+        print(f"\n{exc}")
+        raise SystemExit(2)
 
     if args.news:
         items, news_meta = load_news_from_file(Path(args.news))

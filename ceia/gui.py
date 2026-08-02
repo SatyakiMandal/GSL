@@ -253,12 +253,16 @@ if submitted:
                   else f" — not listed on {exchange}, using the nearest match"))
 
     aliases = [a.strip() for a in aliases_raw.split(",") if a.strip()]
-    config = RunConfig(
-        company=company, ticker=resolved_ticker, benchmark=benchmark, exchange=exchange,
-        start=start, end=end, aliases=aliases,
-        event_window=(int(event_before), int(event_after)),
-        min_relevance=min_relevance,
-    )
+    try:
+        config = RunConfig(
+            company=company, ticker=resolved_ticker, benchmark=benchmark, exchange=exchange,
+            start=start, end=end, aliases=aliases,
+            event_window=(int(event_before), int(event_after)),
+            min_relevance=min_relevance,
+        )
+    except ValueError as exc:
+        st.error(str(exc))
+        st.stop()
 
     try:
         with st.spinner("Running…"):

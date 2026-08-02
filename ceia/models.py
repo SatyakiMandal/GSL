@@ -96,6 +96,16 @@ class RunConfig:
     event_window: tuple[int, int] = (-1, 3)
     min_relevance: float = 0.35
 
+    def __post_init__(self) -> None:
+        # An inverted range makes every discovery strategy's date loop empty
+        # (`_days`/`_months` in discovery.py never yield), so it silently
+        # produces zero candidates from every source rather than an error -
+        # indistinguishable from "scraping is broken" unless caught here.
+        if self.start > self.end:
+            raise ValueError(
+                f"start date ({self.start}) is after end date ({self.end})"
+            )
+
     @property
     def all_aliases(self) -> list[str]:
         """Company name plus user-supplied aliases, longest first.
