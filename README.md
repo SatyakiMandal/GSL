@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-236 tests
+246 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -81,7 +81,7 @@ FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
 front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 236 tests, no network required
+pytest -q     # 246 tests, no network required
 ```
 
 ### Run the spike
@@ -182,7 +182,35 @@ timestamp, trading-day attribution, relevance score, sentiment and event tag.
 | Alignment | `ceia/align.py` | Publish time → trading day, honouring the 15:30 IST close |
 | Sentiment | `ceia/sentiment.py` | FinBERT + coarse event category |
 | Emotion | `ceia/emotion.py` | GoEmotions — secondary, general-purpose emotional texture |
+| Ticker lookup | `ceia/ticker_lookup.py` | Company name → Yahoo-style ticker, when `--ticker` is omitted |
 | Orchestration | `ceia/ingest.py` | Wires it together; CLI |
+
+### Ticker auto-detection
+
+`--ticker` is optional on both `ceia.ingest` and `ceia.analyze`. Give just a
+company name and the tool looks up the symbol itself via Yahoo Finance's
+public search endpoint, preferring an NSE (`.NS`) listing over BSE (`.BO`) —
+or the reverse with `--exchange BSE`:
+
+```bash
+python -m ceia.analyze --company "Adani Enterprises" \
+  --start 2023-01-24 --end 2023-02-10 --alias Adani
+```
+
+prints `Resolved ticker: 'Adani Enterprises' -> ADANIENT.NS (Adani
+Enterprises Ltd)` before continuing exactly as if `--ticker ADANIENT.NS` had
+been passed directly. Pass `--ticker` explicitly to skip the lookup — needed
+if the auto-detected symbol is wrong, or the exchange isn't NSE/BSE at all.
+The GUI ([Phase 4](#phase-4--gui)) does the same thing: leave its Ticker
+field blank and it resolves from the Company field on submit.
+
+This calls the same Yahoo host `YahooChartProvider` already uses for price
+history, so it is subject to the identical constraint noted in
+[Phase 0](#phase-0--feasibility-spike): Yahoo rate-limits shared/proxied
+egress (`HTTP 429`), which is what the build sandbox for this repo hits. It
+worked on an unproxied connection during development; a raised
+`TickerLookupError` on a blocked network is the endpoint being unreachable,
+not a bug in the matching logic — fall back to an explicit `--ticker` there.
 
 ### Verified run
 
@@ -284,17 +312,20 @@ python -m ceia.analyze \
   --start 2023-01-24 --end 2023-02-10 \
   --news out/adani_jan2023.json
 
-# Or scrape and analyse in one pass.
-python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
+# Or scrape and analyse in one pass — ticker auto-detected from the company name.
+python -m ceia.analyze --company "Adani Enterprises" \
   --start 2023-01-24 --end 2023-02-10 --alias Adani
 ```
 
-Flags: `--event-window BEFORE AFTER` (default `-1 3`), `--return-z`,
-`--coverage-z`, `--lead-in-days`, `--price-csv DIR` (offline prices),
-`--api-key KEY` (Alpha Vantage key on the command line — no environment
-variable needed, which sidesteps a real trap on Windows PowerShell: `set
-NAME=value` is `cmd.exe` syntax and does not create an actual environment
-variable in PowerShell, which needs `$env:NAME = 'value'` instead).
+Flags: `--ticker` (skips auto-detection; see
+[Ticker auto-detection](#ticker-auto-detection)), `--exchange` (`NSE` or
+`BSE`, biases auto-detection, default `NSE`), `--event-window BEFORE AFTER`
+(default `-1 3`), `--return-z`, `--coverage-z`, `--lead-in-days`,
+`--price-csv DIR` (offline prices), `--api-key KEY` (Alpha Vantage key on the
+command line — no environment variable needed, which sidesteps a real trap on
+Windows PowerShell: `set NAME=value` is `cmd.exe` syntax and does not create
+an actual environment variable in PowerShell, which needs `$env:NAME =
+'value'` instead).
 
 **Price providers** are tried in order: `yfinance` → Yahoo chart API →
 Alpha Vantage (`--api-key`, or `ALPHAVANTAGE_API_KEY` if unset) → local CSV.
@@ -421,6 +452,11 @@ Opens at `http://localhost:8501`. Two news-data modes:
   (`st.cache_resource`), so only the first run pays the download/load cost.
   Progress streams into the page line by line rather than leaving a blank
   spinner for the minutes a rate-limited scrape takes.
+
+Enter just a company name and leave the Ticker field blank to auto-detect it
+(the Exchange selector next to it picks NSE vs. BSE) — see
+[Ticker auto-detection](#ticker-auto-detection). Aliases are optional too;
+the company name alone is always matched.
 
 Price data uses the same provider chain as the CLI (yfinance → Yahoo chart API
 → Alpha Vantage → CSV), configurable from a "Price source" panel: an optional

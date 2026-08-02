@@ -190,7 +190,10 @@ def _print(analysis: Analysis) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Phase 2: event study")
     parser.add_argument("--company", required=True)
-    parser.add_argument("--ticker", required=True)
+    parser.add_argument("--ticker", default=None,
+                        help="e.g. ADANIENT.NS. Auto-detected from --company if omitted.")
+    parser.add_argument("--exchange", default="NSE",
+                        help="Preferred exchange for ticker auto-detection (NSE or BSE).")
     parser.add_argument("--benchmark", default="^NSEI")
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
@@ -220,8 +223,21 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
+    ticker = args.ticker
+    if not ticker:
+        from .ticker_lookup import TickerLookupError, resolve_ticker
+        try:
+            match = resolve_ticker(args.company, exchange=args.exchange)
+        except TickerLookupError as exc:
+            print(f"\nTicker lookup failed: {exc}")
+            raise SystemExit(2)
+        ticker = match.symbol
+        print(f"Resolved ticker: {args.company!r} -> {ticker} ({match.name})"
+              + ("" if match.exact_exchange_match
+                 else f" -- not listed on {args.exchange}, using nearest match"))
+
     config = RunConfig(
-        company=args.company, ticker=args.ticker, benchmark=args.benchmark,
+        company=args.company, ticker=ticker, benchmark=args.benchmark,
         start=date.fromisoformat(args.start), end=date.fromisoformat(args.end),
         aliases=args.alias, event_window=tuple(args.event_window),
         min_relevance=args.min_relevance,

@@ -181,13 +181,22 @@ with st.form("run_config"):
                  "limits, so it takes minutes, not seconds.",
         )
         company = st.text_input("Company", value="Adani Enterprises", key="company")
-        ticker = st.text_input("Ticker (Yahoo-style, e.g. ADANIENT.NS)",
-                               value="ADANIENT.NS", key="ticker")
+        ticker_col, exchange_col = st.columns([3, 1])
+        with ticker_col:
+            ticker = st.text_input(
+                "Ticker (Yahoo-style, e.g. ADANIENT.NS)", value="", key="ticker",
+                help="Leave blank to auto-detect from the company name above.",
+            )
+        with exchange_col:
+            exchange = st.selectbox("Exchange", ["NSE", "BSE"],
+                                    help="Used to pick between .NS/.BO when "
+                                         "auto-detecting the ticker.")
         benchmark = st.text_input("Benchmark", value="^NSEI", key="benchmark")
         aliases_raw = st.text_input(
-            "Aliases (comma-separated)", value="Adani, Adani Group",
+            "Aliases (comma-separated, optional)", value="",
             help="Short names, product names, misspellings — anything the "
-                 "press might use besides the company's full legal name.",
+                 "press might use besides the company's full legal name. "
+                 "The company name itself is always included.",
         )
     with col2:
         default_start = date(2023, 1, 20)
@@ -229,9 +238,23 @@ with st.form("run_config"):
     submitted = st.form_submit_button("Run analysis", type="primary")
 
 if submitted:
+    resolved_ticker = ticker.strip()
+    if not resolved_ticker:
+        from ceia.ticker_lookup import TickerLookupError, resolve_ticker
+        try:
+            with st.spinner(f"Looking up a ticker for {company!r}…"):
+                match = resolve_ticker(company, exchange=exchange)
+        except TickerLookupError as exc:
+            st.error(f"Ticker lookup failed: {exc}\n\nType the ticker in directly instead.")
+            st.stop()
+        resolved_ticker = match.symbol
+        st.info(f"Resolved ticker: {company!r} → **{resolved_ticker}** ({match.name})"
+               + ("" if match.exact_exchange_match
+                  else f" — not listed on {exchange}, using the nearest match"))
+
     aliases = [a.strip() for a in aliases_raw.split(",") if a.strip()]
     config = RunConfig(
-        company=company, ticker=ticker, benchmark=benchmark,
+        company=company, ticker=resolved_ticker, benchmark=benchmark, exchange=exchange,
         start=start, end=end, aliases=aliases,
         event_window=(int(event_before), int(event_after)),
         min_relevance=min_relevance,
