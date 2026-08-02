@@ -7,7 +7,8 @@ unusual coverage coincided with an unusual **benchmark-adjusted** price move.
 It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
-**Status: complete and verified on real data.** All four phases, 231 tests
+**Status: complete and verified on real data.** All four phases, a GUI on top,
+236 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -76,10 +77,11 @@ They are the same entry points as `python -m ceia.probe` and friends, which
 still work without installing.
 
 Lighter installs: `pip install -e .` for scraping only, `.[sentiment]` to add
-FinBERT, `.[prices]` for `yfinance`, `.[dev]` for the tests.
+FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
+front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 231 tests, no network required
+pytest -q     # 236 tests, no network required
 ```
 
 ### Run the spike
@@ -394,6 +396,38 @@ scans generated narrative for causal verbs outside an explicit denial.
   caveat** that the agreement branch carried.
 
 ---
+
+## Phase 4 — GUI
+
+`ceia/gui.py` is a [Streamlit](https://streamlit.io) front end over the same
+pipeline the CLI uses — `ceia.ingest.run`, `ceia.analyze.analyse` and
+`ceia.report.build_html`. No analysis logic lives in it; it builds a form,
+calls those functions, and renders the result. The CLI is unchanged and stays
+the scriptable/reproducible entry point; the GUI is for interactive use.
+
+```bash
+pip install -e ".[gui]"       # streamlit, on top of whatever extras you already have
+streamlit run ceia/gui.py
+```
+
+Opens at `http://localhost:8501`. Two news-data modes:
+
+- **Bundled Adani corpus** — the same 137-item `data/adani_wide_2023.json`
+  from [Reusing the collected corpus](#reusing-the-collected-corpus). Runs the
+  event-study/report stage only: seconds, no network, no model download.
+- **Scrape live** — the full pipeline for any company/ticker/date range,
+  equivalent to `python -m ceia.ingest` followed by `ceia.analyze`. FinBERT and
+  GoEmotions load lazily and are cached across runs in the same session
+  (`st.cache_resource`), so only the first run pays the download/load cost.
+  Progress streams into the page line by line rather than leaving a blank
+  spinner for the minutes a rate-limited scrape takes.
+
+Price data uses the same provider chain as the CLI (yfinance → Yahoo chart API
+→ Alpha Vantage → CSV), configurable from a "Price source" panel: an optional
+Alpha Vantage key, or two uploaded CSVs (ticker and benchmark) that — if both
+are present — are used directly instead of any network provider. The finished
+run shows headline metrics, the top candidate incident, the full HTML report
+embedded inline, and download buttons for `report.html` and `analysis.json`.
 
 ## Reusing the collected corpus
 
