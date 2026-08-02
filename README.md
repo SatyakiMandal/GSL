@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete** — feasibility spike, news ingestion and sentiment,
-event-study engine, and reporting. 174 tests passing.
+event-study engine, and reporting. 191 tests passing.
 
 One thing is deliberately unclaimed: **no run has used real price data.** Every
 provider was unreachable from the build environment. The news half is verified
@@ -28,14 +28,18 @@ the price library returns clean data.
 **The full write-up is [`docs/phase0-findings.md`](docs/phase0-findings.md).**
 The short version:
 
-- **Three of four sources are usable, all verified end to end**, and all serve
-  **plain HTML** — no headless browser needed anywhere.
+- **Four sources are usable, all verified end to end**, and all serve
+  **plain HTML** — no headless browser needed anywhere. Business Standard proved
+  unreachable and was replaced by Moneycontrol, so the count is back to four.
   - **Economic Times**: month-partitioned sitemaps back to **October 2001**;
     JSON-LD with real `datePublished` and full article body.
   - **Business Line**: day-partitioned archive back to **December 2010** — the
-    deepest of the three. No JSON-LD; timestamps come from meta tags.
+    deepest of the four. No JSON-LD; timestamps come from meta tags.
   - **Financial Express**: day-partitioned sitemaps. Its index advertises only
     ~92 days, but dated URLs resolve far beyond that, so historical ranges work.
+  - **Moneycontrol**: year index → month sitemaps; 8,164 URLs for January 2023
+    alone. Nests its JSON-LD inside an `@graph` and uses
+    `og:article:published_time`, both of which extraction handles.
 - **The search route the PRD assumed is disallowed** on FE (`/*?s=`) and Business
   Line (`/search/*`) for every user agent, so ingestion uses each site's
   robots.txt-declared sitemaps — which are date-partitioned and reach further
@@ -71,20 +75,20 @@ Lighter installs: `pip install -e .` for scraping only, `.[sentiment]` to add
 FinBERT, `.[prices]` for `yfinance`, `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 174 tests, no network required
+pytest -q     # 191 tests, no network required
 ```
 
 ### Run the spike
 
 ```bash
-# All four sources: robots.txt policy only, no content fetched.
+# Every source, robots.txt policy only, no content fetched.
 python -m ceia.probe --robots-only --skip-prices
 
-# Economic Times end to end (sitemap depth, rendering, paywall, JSON-LD).
-python -m ceia.probe --only economic_times --skip-prices
+# Everything: sitemap depth, rendering, paywall state, timestamp mechanism.
+python -m ceia.probe --skip-prices
 
-# Financial Express and Business Line.
-python -m ceia.probe --only financial_express business_line --skip-prices
+# One source at a time.
+python -m ceia.probe --only moneycontrol --skip-prices
 
 # Check the price providers for a ticker and benchmark.
 python -m ceia.probe --ticker ADANIENT.NS --benchmark ^NSEI \
@@ -102,7 +106,7 @@ Useful flags: `--user-agent` (what identity to evaluate `robots.txt` against),
 |---|---|
 | `ceia/robots.py` | `robots.txt` parser and matcher |
 | `ceia/fetcher.py` | Polite HTTP client: robots enforcement, rate limiting, disk cache, provenance log |
-| `ceia/sources.py` | The four sources and their discovery routes |
+| `ceia/sources.py` | The sources and their discovery routes |
 | `ceia/prices.py` | Pluggable price providers (`yfinance` / Yahoo chart / CSV) |
 | `ceia/probe.py` | The spike itself; `python -m ceia.probe` |
 
@@ -141,7 +145,7 @@ headline, timestamp, and visible snippet.
 
 ## Phase 1 — News ingestion and sentiment
 
-Collects company coverage across the three usable sources, filters it to what is
+Collects company coverage across the four usable sources, filters it to what is
 actually *about* the company, removes syndicated duplicates, places each item on
 the trading day that could have reacted to it, and scores it with FinBERT.
 
@@ -371,8 +375,9 @@ the method rather than a disclaimer:
   range yields a handful of genuinely distinct incident days — far too few for
   the sentiment/abnormal-return relationship to carry statistical significance.
   A real event study spans dozens of companies and events. The PRD (Section 9)
-  anticipated this at four sources; Phase 0 found the effective count is **three**
-  (Business Standard is unreachable), so the caveat binds harder, not less.
+  anticipated this at four sources, and four is what the tool ends up with —
+  Moneycontrol standing in for the unreachable Business Standard — so the caveat
+  binds exactly as the PRD framed it.
 - **Coincidence in time is not causation.** The tool reports that coverage
   *coincided with* a price move. Benchmark-adjusting every return is the main
   defence against reading a market-wide move as company-specific news, but it
