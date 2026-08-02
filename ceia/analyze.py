@@ -206,6 +206,11 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--price-csv", default=None,
                         help="Directory of <SYMBOL>.csv files; forces the CSV provider.")
+    parser.add_argument("--api-key", default=None,
+                        help="Alpha Vantage API key. Overrides ALPHAVANTAGE_API_KEY; "
+                             "avoids needing to set an environment variable at all, "
+                             "which on Windows PowerShell means $env:NAME = 'value', "
+                             "not the cmd.exe-style 'set NAME=value'.")
     parser.add_argument("--cache-dir", default="cache")
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     parser.add_argument("--out", default="out/analysis.json")
@@ -235,6 +240,12 @@ def main() -> None:
     if args.price_csv:
         from .prices import CsvProvider
         providers = [CsvProvider(args.price_csv)]
+    elif args.api_key:
+        # Same provider order as the default chain, with the key injected
+        # directly rather than requiring ALPHAVANTAGE_API_KEY to be set.
+        from .prices import AlphaVantageProvider, CsvProvider, YahooChartProvider, YFinanceProvider
+        providers = [YFinanceProvider(), YahooChartProvider(),
+                    AlphaVantageProvider(api_key=args.api_key), CsvProvider()]
 
     try:
         analysis = analyse(

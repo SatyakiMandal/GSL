@@ -18,6 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ceia.prices import (  # noqa: E402
+    AlphaVantageProvider,
     CsvProvider,
     PriceError,
     PriceProvider,
@@ -117,3 +118,23 @@ class TestFallback:
             load_prices("NOPE.NS", date(2023, 1, 1), date(2023, 2, 1),
                         providers=[CsvProvider(tmp_path)])
         assert "csv" in str(excinfo.value)
+
+
+class TestApiKeyCliArgument:
+    """--api-key must reach AlphaVantageProvider without touching the
+    environment, since 'set VAR=value' silently fails to create a real
+    environment variable in PowerShell (it needs $env:VAR = 'value'),
+    which made ALPHAVANTAGE_API_KEY invisible to Python even though the
+    user had "set" it.
+    """
+
+    def test_constructor_arg_is_used_over_env(self, monkeypatch):
+        monkeypatch.setenv("ALPHAVANTAGE_API_KEY", "from-env")
+        provider = AlphaVantageProvider(api_key="from-arg")
+        assert provider.api_key == "from-arg"
+
+    def test_constructor_arg_works_with_no_env_var_set(self, monkeypatch):
+        monkeypatch.delenv("ALPHAVANTAGE_API_KEY", raising=False)
+        provider = AlphaVantageProvider(api_key="from-arg")
+        assert provider.api_key == "from-arg"
+        # Does not raise "ALPHAVANTAGE_API_KEY is not set" at construction time.

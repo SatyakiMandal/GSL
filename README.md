@@ -236,10 +236,14 @@ python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
 ```
 
 Flags: `--event-window BEFORE AFTER` (default `-1 3`), `--return-z`,
-`--coverage-z`, `--lead-in-days`, `--price-csv DIR` (offline prices).
+`--coverage-z`, `--lead-in-days`, `--price-csv DIR` (offline prices),
+`--api-key KEY` (Alpha Vantage key on the command line — no environment
+variable needed, which sidesteps a real trap on Windows PowerShell: `set
+NAME=value` is `cmd.exe` syntax and does not create an actual environment
+variable in PowerShell, which needs `$env:NAME = 'value'` instead).
 
 **Price providers** are tried in order: `yfinance` → Yahoo chart API →
-Alpha Vantage (`ALPHAVANTAGE_API_KEY`) → local CSV.
+Alpha Vantage (`--api-key`, or `ALPHAVANTAGE_API_KEY` if unset) → local CSV.
 
 ### ⚠️ The live price feed is unverified
 
