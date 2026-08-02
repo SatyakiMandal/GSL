@@ -17,6 +17,7 @@ The score combines four signals:
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 
@@ -32,6 +33,16 @@ _ROUNDUP_PATTERNS = (
 )
 _ROUNDUP_RE = re.compile("|".join(_ROUNDUP_PATTERNS), re.I)
 
+# Component weights. They sum to 0.97 at their theoretical maximum, so a
+# perfect score is reachable in principle but rare in practice - the point is
+# that scores spread across the range instead of piling up on the ceiling.
+W_HEADLINE = 0.45   # named in the headline: the strongest single signal
+W_BODY = 0.30       # saturating in the number of body mentions
+W_DENSITY = 0.12    # mentions per 100 words
+W_POSITION = 0.10   # first mention lands early
+P_ROUNDUP = 0.40    # multi-company market round-up
+P_NO_HEADLINE = 0.15  # subject of the headline is some other company
+
 
 @dataclass
 class RelevanceResult:
@@ -42,9 +53,17 @@ class RelevanceResult:
 
 
 def _alias_pattern(alias: str) -> re.Pattern:
-    """Word-boundary match, tolerant of runs of whitespace inside the alias."""
+    """Word-boundary match, tolerant of whitespace runs and English inflection.
+
+    The trailing group matters more than it looks. The Indian financial press
+    routinely writes the family or group form — "Adanis dismiss US firm's
+    allegations" — and a bare ``\\bAdani\\b`` misses it, because the ``s`` is a
+    word character. On a real corpus that cost the headline match on a story
+    with forty body mentions, dropping it from ~0.9 to 0.37.
+    """
     parts = [re.escape(part) for part in alias.split()]
-    return re.compile(r"\b" + r"\s+".join(parts) + r"\b", re.I)
+    return re.compile(r"\b" + r"\s+".join(parts) + r"(?:['’]s|s['’]|s)?\b",
+                      re.I)
 
 
 def score_item(
@@ -90,36 +109,43 @@ def score_item(
     reasons = []
 
     if headline_hits:
-        score += 0.60
+        score += W_HEADLINE
         reasons.append("named in headline")
+
     if body_hits:
-        # Density, capped so a long article is not penalised for being long.
+        # Saturating curve rather than a linear ramp into a cap. A linear
+        # component plus a headline match sent almost everything to the 1.0
+        # ceiling: on a 137-item corpus, 121 items scored exactly 1.00, which
+        # makes the score useless both for ranking and as the weight it feeds
+        # into weighted sentiment. This keeps scores spread across the range.
+        score += W_BODY * (1 - math.exp(-body_hits / 3))
         density = body_hits / max(len(body.split()) / 100, 1)
-        score += min(0.25, 0.08 * body_hits) + min(0.10, density * 0.05)
+        score += min(W_DENSITY, density * 0.06)
         reasons.append(f"{body_hits} body mention(s)")
 
     if first_position is not None and body:
         # Early mentions suggest subjecthood; late ones suggest a passing cite.
         position_ratio = first_position / max(len(body), 1)
         if position_ratio < 0.15:
-            score += 0.15
+            score += W_POSITION
             reasons.append("mentioned early")
         elif position_ratio > 0.60:
             score -= 0.10
             reasons.append("only mentioned late")
 
     if _ROUNDUP_RE.search(headline):
-        score -= 0.35
+        score -= P_ROUNDUP
         reasons.append("market round-up headline")
 
     # A headline naming a different company, with ours only in the body, is the
     # classic passing comparison.
     if not headline_hits and body_hits:
-        score -= 0.15
+        score -= P_NO_HEADLINE
         reasons.append("not named in headline")
 
     score = max(0.0, min(1.0, score))
-    return RelevanceResult(score, matched, headline_hits > 0, "; ".join(reasons))
+    return RelevanceResult(round(score, 4), matched, headline_hits > 0,
+                           "; ".join(reasons))
 
 
 def apply(items: list[NewsItem], aliases: list[str], ticker: str | None,

@@ -7,8 +7,13 @@ unusual coverage coincided with an unusual **benchmark-adjusted** price move.
 It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
-**Status: all four phases complete** — feasibility spike, news ingestion and
-sentiment, event-study engine, and reporting.
+**Status: complete** — feasibility spike, news ingestion and sentiment,
+event-study engine, and reporting. 174 tests passing.
+
+One thing is deliberately unclaimed: **no run has used real price data.** Every
+provider was unreachable from the build environment. The news half is verified
+against live sources; the price half is verified against synthetic series with
+known parameters. See [`docs/validation-run.md`](docs/validation-run.md).
 
 ---
 
@@ -66,7 +71,7 @@ Lighter installs: `pip install -e .` for scraping only, `.[sentiment]` to add
 FinBERT, `.[prices]` for `yfinance`, `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 166 tests, no network required
+pytest -q     # 174 tests, no network required
 ```
 
 ### Run the spike
@@ -327,6 +332,33 @@ scans generated narrative for causal verbs outside an explicit denial.
   markup would have been injected into the page.
 - **The "tone disagrees with price" narrative branch omitted the non-causation
   caveat** that the agreement branch carried.
+
+---
+
+## Validation run
+
+A 29-day run over **20 January – 17 February 2023** exercises the strict
+incident test and the relevance filter against a real corpus. Full write-up in
+[`docs/validation-run.md`](docs/validation-run.md).
+
+**Real:** 200 articles fetched from the four live sources — 137 relevant, 132
+unique after dedupe, 5 duplicates caught, **0 fetch errors, 0 unattributed
+items**. **Synthetic:** the price series, so the flagged days are not findings
+about Adani.
+
+**59 of 189 items — 31% — published after the 15:30 IST close.** Every one would
+have been credited to the wrong trading day without the attribution rule.
+
+Two things the corpus caught that smaller runs could not:
+
+- **The relevance score was saturating.** 121 of 137 items scored exactly 1.00,
+  so it could not rank anything, and the weight it feeds into weighted sentiment
+  was uniform. Rebalanced to a saturating curve with named weights; the
+  distribution now runs 0.36–0.97 with nothing at the ceiling.
+- **`\bAdani\b` does not match "Adanis".** The Indian press writes the family
+  and group forms constantly, and one story with forty body mentions scored 0.37
+  because of it. Alias patterns now accept an optional `s`, `'s` or `’s` — that
+  story moved to 0.97. A negative test ensures "Adaniyar" still does not match.
 
 ---
 

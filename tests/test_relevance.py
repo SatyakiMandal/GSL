@@ -108,3 +108,65 @@ class TestRunConfig:
         assert config.all_aliases[0] == "Adani Enterprises"
         lowered = [a.lower() for a in config.all_aliases]
         assert len(lowered) == len(set(lowered))
+
+
+class TestInflection:
+    """Indian financial press routinely uses the family/group plural form."""
+
+    def test_plural_alias_matches(self):
+        result = score_item("Adanis dismiss US firm's allegations",
+                            "The Adani group rejected the report. " * 12, ALIASES)
+        assert result.headline_match
+        assert result.score > 0.8
+
+    def test_possessive_alias_matches(self):
+        result = score_item("Adani's FPO sails through",
+                            "Adani Enterprises priced the issue. " * 10, ALIASES)
+        assert result.headline_match
+
+    def test_curly_apostrophe_matches(self):
+        result = score_item("Adani’s FPO sails through",
+                            "Adani Enterprises priced the issue. " * 10, ALIASES)
+        assert result.headline_match
+
+    def test_does_not_match_a_longer_unrelated_word(self):
+        """'Adaniyar' is not 'Adani' with an inflection."""
+        result = score_item("Adaniyar village wins award",
+                            "Adaniyar is a village. " * 10, ["Adani"])
+        assert result.score == 0.0
+
+
+class TestScoreDistribution:
+    """The score must discriminate, not pile up on the ceiling.
+
+    A linear body component plus a headline match previously sent 121 of 137
+    items on a real corpus to exactly 1.00, which made the score useless both
+    for ranking and as the weight it feeds into weighted sentiment.
+    """
+
+    def _score(self, headline, body):
+        return score_item(headline, body, ALIASES, ticker="ADANIENT.NS").score
+
+    def test_subject_article_scores_high_but_below_the_ceiling(self):
+        score = self._score(
+            "Adani Enterprises FPO fully subscribed",
+            "Adani Enterprises said the offer closed. " * 20)
+        assert 0.7 <= score < 1.0, f"got {score}"
+
+    def test_more_mentions_never_reach_exactly_one(self):
+        score = self._score("Adani Enterprises everywhere", "Adani Enterprises " * 400)
+        assert score < 1.0
+
+    def test_marginal_and_subject_are_clearly_separated(self):
+        subject = self._score("Adani Enterprises posts higher profit",
+                              "Adani Enterprises reported results. " * 20)
+        marginal = self._score(
+            "BJP slams investor over comments",
+            "Political row continued. " * 40 + "Adani was mentioned. " * 3)
+        assert subject - marginal > 0.3, f"subject {subject}, marginal {marginal}"
+
+    def test_roundup_falls_below_threshold(self):
+        score = self._score(
+            "Sensex tanks 600 pts, Nifty slips below 17,750 in early trade",
+            "Adani Enterprises fell. " * 12)
+        assert score < 0.6, "a market round-up should be clearly downweighted"
