@@ -339,6 +339,25 @@ scans generated narrative for causal verbs outside an explicit denial.
 
 ---
 
+## Reusing the collected corpus
+
+`data/adani_wide_2023.json` holds the 137-item Adani corpus from the validation
+run — headlines, URLs, timestamps, and the already-computed relevance and
+sentiment scores. Point `--news` at it to re-run the event study without
+re-scraping anything:
+
+```bash
+python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
+  --start 2023-01-20 --end 2023-02-17 --alias Adani --alias "Adani Group" \
+  --news data/adani_wide_2023.json --html out/report.html
+```
+
+**Article bodies are stripped from this file deliberately.** Fetching articles
+for private analysis is one thing; committing 137 publishers' articles to a
+repository is redistribution, which is a different act. The analysis stage never
+needs the body again — sentiment is already scored — so nothing is lost. Run
+`python -m ceia.ingest` to rebuild the full corpus, bodies included, yourself.
+
 ## Validation run
 
 A 29-day run over **20 January – 17 February 2023** exercises the strict

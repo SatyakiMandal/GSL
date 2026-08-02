@@ -12,3 +12,6 @@ cache/*
 docs/phase0-*.json
 data/prices/*.csv
 out/
+
+# The news fixture in data/ is committed deliberately (bodies stripped).
+!data/adani_wide_2023.json
