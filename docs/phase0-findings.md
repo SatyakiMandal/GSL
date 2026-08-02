@@ -8,18 +8,20 @@ Reproduce with `python -m ceia.probe`. Everything below was observed on
 ## Headline result
 
 The PRD's assumed ingestion route — drive each site's **search or archive
-page** (Section 3, Section 7.1) — **is not available on three of the four
+page** (Section 3, Section 7.1) — **is not available on three of the four named
 sources.** Two disallow the search path in `robots.txt` for *every* user agent,
-and one refuses all traffic outright.
+and one refuses all traffic outright. Business Standard was replaced by
+Moneycontrol, so the effective source count is back to four.
 
 | Source | robots.txt | PRD's search route | Usable route found | Archive depth | Verdict |
 |---|---|---|---|---|---|
 | **Economic Times** | 200, `Allow: /` | allowed | month sitemaps + day archive | **Oct 2001** | **Usable, verified** |
 | **Financial Express** | 200 | **`Disallow: /*?s=`** | `sitemap.xml?yyyy=&mm=&dd=` | **≥ Jan 2023** | **Usable, verified** |
 | **Business Line** | 200 | **`Disallow: /search/*`** | `sitemap/archive/all/YYYYMMDD_1.xml` | **Dec 2010** | **Usable, verified** |
-| **Business Standard** | **403** | n/a | none | n/a | **Unavailable** |
+| **Moneycontrol** | 200 | allowed | `news/index-sitemap-YYYY.xml` → month | **≥ Jan 2023** | **Usable, verified** |
+| **Business Standard** | **403** | n/a | none | n/a | **Unavailable** — replaced by Moneycontrol |
 
-All three usable sources serve **plain server-rendered HTML** — no headless
+All four usable sources serve **plain server-rendered HTML** — no headless
 browser is needed anywhere in this project.
 
 So the answer to "plain HTML or JavaScript-rendered?" — the question Phase 0
@@ -130,7 +132,31 @@ needs a real DOM parser rather than paragraph regex, since inline scripts
 otherwise leak into the extracted text. The probe now reports which timestamp
 mechanism each site uses so this cannot be assumed wrong later.
 
-## 3. Business Standard — unavailable
+## 3. Moneycontrol — the replacement for Business Standard
+
+Added after Business Standard proved unreachable. It is the most permissive of
+the four: `robots.txt` reads cleanly, the sitemap route is allowed, and the
+search path is *not* disallowed (though ingestion uses sitemaps anyway, for the
+date partitioning). It refuses `GPTBot`, `ChatGPT-User`, `CCBot` and
+`Google-Extended`, but **names no Anthropic agent**.
+
+**Discovery.** A year index (`news/index-sitemap-YYYY.xml`) fans out to month
+sitemaps (`news/sitemap/sitemap-post-YYYY-MM.xml`). January 2023 alone holds
+**8,164 URLs**, 85 of them naming Adani in the slug. Entries carry `<lastmod>`
+with an IST offset.
+
+**Parsing needed two accommodations**, both now handled:
+
+- The `NewsArticle` JSON-LD is **nested inside an `@graph`** rather than sitting
+  at the top level, so a non-recursive walker misses it entirely.
+- The publish time is exposed as **`og:article:published_time`**, not the plain
+  `article:published_time` the other sites use.
+
+Sample: *"India's regulator discussed Adani firms with ratings agencies"*,
+`2023-01-31T23:01:58+05:30`, 2,164 chars of body, no paywall. Note the
+timestamp — 23:01 IST, long after the close.
+
+## 4. Business Standard — unavailable
 
 Every request, including `/robots.txt` itself, returns **403 from `AkamaiGHost`**
 with an "Access Denied" interstitial. Browser-like headers do not change it;
@@ -162,12 +188,13 @@ Legitimate ways to get Business Standard back, if it matters enough:
 - **Supply items manually.** The ingestion schema is plain; a hand-collected CSV
   of headline/timestamp/URL can be dropped in for a specific incident.
 
-**Effective source count is 3 of 4, all three now verified end to end.**
+**Effective source count is 4**, with Moneycontrol standing in for Business
+Standard — all four verified end to end.
 Section 9 already warns the sample is too small for statistical significance at
 four sources; at three it is smaller still. This is reported in the tool's own
 output, not just here.
 
-## 4. Price data — `yfinance` needs help in this environment
+## 5. Price data — `yfinance` needs help in this environment
 
 Two independent problems, both diagnosed rather than assumed:
 

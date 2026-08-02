@@ -26,6 +26,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
+from bs4 import BeautifulSoup
+
+from .extract import _TIMESTAMP_META, json_ld_articles, parse_article
 from .fetcher import DEFAULT_USER_AGENT, Fetcher, RobotsDisallowed
 from .prices import CsvProvider, PriceError, YahooChartProvider, YFinanceProvider
 from .sources import AI_AGENT_TOKENS, ALL_SOURCES, Source
@@ -116,63 +119,75 @@ def probe_source(source: Source, fetcher: Fetcher, fetch_pages: bool) -> SourceF
         finding.discovery.append(entry)
 
     if source.sample_article and fetch_pages:
-        finding.article_check = _probe_article(source.sample_article, fetcher)
+        finding.article_check = _probe_article(source.sample_article, fetcher,
+                                               source.key)
 
     finding.verdict = _verdict(finding)
     return finding
 
 
-def _probe_article(url: str, fetcher: Fetcher) -> dict:
+def _probe_article(url: str, fetcher: Fetcher, source_key: str = "") -> dict:
+    """Report what a real ingestion run would actually get from this page.
+
+    This delegates to :mod:`ceia.extract` rather than re-implementing parsing.
+    An earlier version duplicated the logic and then fell behind it: extraction
+    grew a recursive JSON-LD walker (Moneycontrol nests ``NewsArticle`` inside
+    an ``@graph``) and an ``og:article:published_time`` fallback, while the
+    probe's copy did not — so the probe reported "NONE FOUND" for a page the
+    pipeline parsed perfectly. A feasibility probe that disagrees with the
+    pipeline is worse than no probe, so there is now one implementation.
+    """
     out: dict = {"url": url}
     try:
         resp = fetcher.get(url)
     except Exception as exc:
         out["error"] = f"{type(exc).__name__}: {exc}"
         return out
+
     html = resp.text
     out["status"] = resp.status
     out["javascript_rendered"] = _looks_javascript_rendered(html)
     out["paywall_markers"] = sorted(
         {m.lower() for m in re.findall(r"paywall|isPrime|Subscribe Now|Premium", html)}
     )
-    for block in re.findall(
-        r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>', html, re.S
-    ):
-        try:
-            data = json.loads(block)
-        except json.JSONDecodeError:
-            continue
-        for obj in data if isinstance(data, list) else [data]:
-            if not isinstance(obj, dict) or "NewsArticle" not in str(obj.get("@type", "")):
-                continue
-            body = obj.get("articleBody") or ""
-            out["jsonld"] = {
-                "headline": obj.get("headline"),
-                "datePublished": obj.get("datePublished"),
-                "dateModified": obj.get("dateModified"),
-                "articleBody_chars": len(body),
-            }
 
-    # Business Line carries no NewsArticle JSON-LD but does expose the publish
-    # time as meta tags. Timestamps drive the trading-day attribution rule, so
-    # the probe reports whichever mechanism the site actually uses.
+    parsed = parse_article(html, url, source_key)
+    out["headline"] = parsed["headline"]
+    out["published_at"] = (parsed["published_at"].isoformat()
+                           if parsed["published_at"] else None)
+    out["timestamp_confidence"] = parsed["timestamp_confidence"]
+    out["body_chars"] = len(parsed["body"])
+    out["paywalled"] = parsed["paywalled"]
+
+    articles = json_ld_articles(html)
+    if articles:
+        # Pages often carry several Article-ish blocks and only one of them
+        # holds the publish time. Report the informative one, matching what
+        # extraction actually uses, rather than whichever happens to be first.
+        best = next((a for a in articles if a.get("datePublished")), articles[0])
+        out["jsonld"] = {
+            "headline": best.get("headline"),
+            "datePublished": best.get("datePublished"),
+            "dateModified": best.get("dateModified"),
+            "articleBody_chars": len(best.get("articleBody") or ""),
+            "blocks_found": len(articles),
+        }
+
+    soup = BeautifulSoup(html, "lxml")
     out["meta_timestamps"] = {
-        name: value
-        for name, pattern in (
-            ("article:published_time",
-             r'<meta[^>]+property="article:published_time"[^>]+content="([^"]+)"'),
-            ("publish-date",
-             r'<meta[^>]+name="publish-date"[^>]+content="([^"]+)"'),
-            ("itemprop:datePublished",
-             r'<meta[^>]+itemprop="datePublished"[^>]+content="([^"]+)"'),
-        )
-        if (match := re.search(pattern, html)) and (value := match.group(1))
+        f"{attr}:{key}": tag["content"]
+        for attr, key in _TIMESTAMP_META
+        if (tag := soup.find("meta", attrs={attr: key})) and tag.get("content")
     }
-    out["timestamp_source"] = (
-        "json-ld" if out.get("jsonld", {}).get("datePublished")
-        else "meta-tag" if out["meta_timestamps"]
-        else "NONE FOUND"
-    )
+
+    if out.get("jsonld", {}).get("datePublished"):
+        out["timestamp_source"] = "json-ld"
+    elif out["meta_timestamps"]:
+        out["timestamp_source"] = "meta-tag"
+    elif parsed["published_at"]:
+        out["timestamp_source"] = "other"
+    else:
+        out["timestamp_source"] = "NONE FOUND"
     return out
 
 
@@ -277,7 +292,12 @@ def main() -> None:
                     bits.append(f"{key}={d[key]}")
             print(f"    - {d['url'][:78]}\n        {' '.join(bits)}")
         if f.article_check:
-            print(f"  article check       : {json.dumps(f.article_check.get('jsonld', {}))}")
+            check = f.article_check
+            print(f"  article check       : headline={str(check.get('headline'))[:58]!r}")
+            print(f"                        published={check.get('published_at')} "
+                  f"({check.get('timestamp_confidence')}) "
+                  f"body={check.get('body_chars')} chars "
+                  f"paywalled={check.get('paywalled')}")
             print(f"  timestamp source    : {f.article_check.get('timestamp_source')} {f.article_check.get('meta_timestamps') or ''}")
             if f.article_check.get("paywall_markers"):
                 print(f"  paywall markers     : {f.article_check['paywall_markers']}")
