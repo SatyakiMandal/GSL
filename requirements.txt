@@ -1,12 +1,19 @@
 # Phase 0 (feasibility spike)
 requests>=2.31
 pandas>=2.0
+numpy>=1.24
 lxml>=5.0
 beautifulsoup4>=4.12
 yfinance>=0.2.40
 
-# Phase 1 (ingestion + FinBERT sentiment)
-# torch: install the CPU wheel to avoid pulling CUDA -
-#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# Phase 1 (ingestion + FinBERT sentiment, GoEmotions)
+# --extra-index-url below routes torch to the CPU-only wheel instead of the
+# default CUDA build, which is ~4x smaller and the only kind a deploy host
+# without a GPU (Streamlit Community Cloud, Render, Cloud Run, ...) can use
+# anyway. See https://pytorch.org/get-started/locally/ for other platforms.
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.0
 transformers>=4.40
+
+# Phase 4 (GUI)
+streamlit>=1.30
