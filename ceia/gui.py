@@ -250,7 +250,10 @@ with st.form("run_config"):
         return_z = st.number_input("Abnormal-return z-score threshold", value=1.5, step=0.1)
         limit = st.number_input(
             "Fetch limit (live scraping only; 0 = no cap)", value=200, step=50,
-            help="Caps articles fetched, for a quick trial run.",
+            help="Caps articles fetched, for a quick trial run. Evenly spread "
+                 "across the whole date range rather than just its earliest "
+                 "days, so a low cap thins out coverage everywhere instead of "
+                 "silently truncating the end of the window.",
         )
         skip_sentiment = st.checkbox("Skip FinBERT sentiment (no model download)")
         skip_emotion = st.checkbox("Skip GoEmotions (no model download)")

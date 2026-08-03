@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ceia.discovery import Candidate  # noqa: E402
 from ceia.extract import IST, clean_headline, json_ld_articles, parse_article  # noqa: E402
-from ceia.ingest import _slug_tokens, in_range, interleave, prefilter  # noqa: E402
+from ceia.ingest import _slug_tokens, cap_across_range, in_range, interleave, prefilter  # noqa: E402
 from ceia.models import NewsItem  # noqa: E402
 
 
@@ -65,6 +65,37 @@ class TestInterleave:
 
     def test_empty_input(self):
         assert interleave([]) == []
+
+
+class TestCapAcrossRange:
+    """The bug this exists to prevent: a --limit run over a wide date range
+    silently truncating to just its earliest days, because each source's own
+    candidates arrive in roughly chronological order and interleave() only
+    fixes bias across sources, not across time."""
+
+    def test_under_the_limit_is_unchanged(self):
+        candidates = [Candidate(f"a{i}", "s") for i in range(5)]
+        assert cap_across_range(candidates, 10) == candidates
+
+    def test_caps_to_exactly_the_limit(self):
+        candidates = [Candidate(f"a{i}", "s") for i in range(1000)]
+        assert len(cap_across_range(candidates, 100)) == 100
+
+    def test_late_candidates_survive_a_tight_cap(self):
+        """The whole point: index 999 must not be silently dropped just
+        because it comes last in an interleaved, roughly chronological list."""
+        candidates = [Candidate(f"a{i}", "s") for i in range(1000)]
+        capped_urls = {c.url for c in cap_across_range(candidates, 100)}
+        assert "a999" in capped_urls or "a0" in capped_urls
+        # Stronger: the selection spans the full index range, not just one end.
+        indices = sorted(int(u[1:]) for u in capped_urls)
+        assert indices[0] < 100
+        assert indices[-1] > 900
+
+    def test_order_is_preserved(self):
+        candidates = [Candidate(f"a{i}", "s") for i in range(1000)]
+        indices = [int(c.url[1:]) for c in cap_across_range(candidates, 50)]
+        assert indices == sorted(indices)
 
 
 class TestWindowTrimming:

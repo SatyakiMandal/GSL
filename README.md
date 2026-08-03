@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-246 tests
+253 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -81,7 +81,7 @@ FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
 front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 246 tests, no network required
+pytest -q     # 253 tests, no network required
 ```
 
 ### Run the spike
@@ -239,6 +239,18 @@ missed. That is disclosed in the run stats rather than hidden.
 **Round-robin across sources.** Candidates are interleaved before `--limit`
 applies, so a capped run samples every source instead of spending its whole
 budget on whichever ran first.
+
+**A real bug a full-year run caught: `--limit` was silently truncating the
+date range, not sampling it.** Interleaving fixes bias *across sources* but
+not *across time* — each source's own candidates still arrive in roughly
+chronological order, so index 0 of every source sits near `start`. A capped
+run over a wide window (e.g. `--limit 500` across a full year) exhausted the
+cap on the earliest days and never looked at the rest — which read as "this
+company had one quiet year" in the report rather than "the run stopped
+looking after March." `cap_across_range()` now takes an evenly-spaced sample
+across the whole (already interleaved) candidate list instead of the first
+N, so a tight cap thins out coverage everywhere rather than deleting the back
+half of the window.
 
 **The headline outweighs the body** in both relevance (0.60 of the score) and
 sentiment (0.60 of the blend). A headline is a claim about what a story is

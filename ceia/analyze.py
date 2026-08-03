@@ -206,7 +206,10 @@ def main() -> None:
     parser.add_argument("--coverage-z", type=float, default=eventstudy.DEFAULT_COVERAGE_Z)
     parser.add_argument("--return-z", type=float, default=eventstudy.DEFAULT_RETURN_Z)
     parser.add_argument("--min-relevance", type=float, default=0.35)
-    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Cap articles fetched (live scraping only), evenly "
+                             "spread across the whole date range rather than "
+                             "just its earliest days.")
     parser.add_argument("--price-csv", default=None,
                         help="Directory of <SYMBOL>.csv files; forces the CSV provider.")
     parser.add_argument("--api-key", default=None,

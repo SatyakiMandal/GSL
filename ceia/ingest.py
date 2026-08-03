@@ -121,6 +121,26 @@ def interleave(candidates: list[Candidate]) -> list[Candidate]:
     return ordered
 
 
+def cap_across_range(candidates: list[Candidate], limit: int) -> list[Candidate]:
+    """Cap the candidate list to ``limit`` while keeping the whole date range
+    represented, rather than exhausting the cap on whichever end comes first.
+
+    Each source's own candidates arrive from discovery in roughly chronological
+    order (day- or month-partitioned sitemaps), and ``interleave`` only fixes
+    bias *across sources*, not across time - index 0 of every source is still
+    close to ``start``. Fetching the first ``limit`` candidates off that list
+    would silently stop once the budget is spent, however early that happens,
+    which reads as "nothing happened after March" in the report rather than
+    "the run stopped looking after March". Evenly-spaced index sampling over
+    the already-interleaved list keeps every part of the window represented,
+    at the cost of a shallower sample within each part.
+    """
+    if len(candidates) <= limit:
+        return candidates
+    step = len(candidates) / limit
+    return [candidates[int(i * step)] for i in range(limit)]
+
+
 def in_range(items: list[NewsItem], start: date, end: date) -> list[NewsItem]:
     """Keep items actually published inside the requested window.
 
@@ -205,6 +225,11 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
     narrowed = interleave(prefilter(candidates, tokens))
     log.info("pre-filtered to %d URLs on slug tokens %s", len(narrowed), sorted(tokens))
 
+    if limit is not None and len(narrowed) > limit:
+        narrowed = cap_across_range(narrowed, limit)
+        log.info("capped to %d candidates, spread across the full date range "
+                 "rather than just its earliest days", len(narrowed))
+
     parsed_items, errors = fetch_and_parse(fetcher, narrowed, limit=limit)
     items = in_range(parsed_items, config.start, config.end)
     log.info("parsed %d articles, %d inside the requested window",
@@ -268,7 +293,9 @@ def main() -> None:
     parser.add_argument("--sources", nargs="*", default=None)
     parser.add_argument("--min-relevance", type=float, default=0.35)
     parser.add_argument("--limit", type=int, default=None,
-                        help="Cap articles fetched; useful for a quick trial run.")
+                        help="Cap articles fetched, evenly spread across the "
+                             "whole date range rather than just its earliest "
+                             "days; useful for a quick trial run.")
     parser.add_argument("--skip-sentiment", action="store_true",
                         help="Skip FinBERT (no model download).")
     parser.add_argument("--skip-emotion", action="store_true",
