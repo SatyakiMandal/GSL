@@ -114,7 +114,8 @@ class FinBertScorer:
         torch = self._torch
         out: list[Sentiment] = []
         id2label = {i: l.lower() for i, l in self._model.config.id2label.items()}
-        for start in range(0, len(texts), self.batch_size):
+        total = len(texts)
+        for start in range(0, total, self.batch_size):
             batch = texts[start:start + self.batch_size]
             encoded = self._tokenizer(batch, return_tensors="pt", padding=True,
                                       truncation=True, max_length=512)
@@ -128,6 +129,11 @@ class FinBertScorer:
                     score=scores.get("positive", 0.0) - scores.get("negative", 0.0),
                     confidence=scores[label],
                 ))
+            # CPU inference on a few hundred items can run minutes with nothing
+            # else logged in between, which reads as a hang rather than
+            # progress - so each batch gets a line rather than only the final
+            # count.
+            log.info("FinBERT: scored %d/%d texts", min(start + self.batch_size, total), total)
         return out
 
     def _chunks(self, text: str, max_words: int = 300) -> list[str]:

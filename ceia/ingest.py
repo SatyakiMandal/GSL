@@ -145,7 +145,8 @@ def fetch_and_parse(fetcher: Fetcher, candidates: list[Candidate],
     items: list[NewsItem] = []
     errors = {"robots": 0, "http": 0, "parse": 0, "empty": 0}
     seen: set[str] = set()
-    for candidate in candidates:
+    total = len(candidates)
+    for n, candidate in enumerate(candidates, 1):
         if limit is not None and len(items) >= limit:
             break
         if candidate.url in seen:
@@ -177,6 +178,12 @@ def fetch_and_parse(fetcher: Fetcher, candidates: list[Candidate],
             fetched_at=response.fetched_at,
             content_sha256=response.sha256,
         ))
+        # Each fetch is rate-limited (>=2s/origin), so a few hundred candidates
+        # can take many minutes; without this a long stretch of no items kept
+        # (paywalls, off-topic slugs) looks identical to the process hanging.
+        if n % 20 == 0 or n == total:
+            log.info("fetched %d/%d candidates, %d parsed OK, errors=%s",
+                     n, total, len(items), errors)
     return items, errors
 
 

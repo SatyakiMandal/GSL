@@ -32,6 +32,7 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 # `streamlit run ceia/gui.py` executes this file as a standalone script, not
@@ -156,6 +157,25 @@ def _run_analysis(config: RunConfig, source_mode: str, limit: int | None,
         for key, state in result.source_status.items():
             if state.startswith("failed") or "0 " in state:
                 st.warning(f"{key}: {state}")
+
+        # A zero (or low) final count could die at any of several stages -
+        # discovery, the slug pre-filter, fetch/parse, the date window, or
+        # the relevance filter - and without this breakdown that's a black
+        # box. Shown every run, not just on failure, since "why is this
+        # number lower than I expected" matters on a partial success too.
+        with st.expander("Ingestion funnel (why the final count is what it is)"):
+            funnel = pd.Series(result.stats, name="count").to_frame()
+            st.dataframe(funnel, use_container_width=True)
+            if result.stats.get("candidates_discovered", 0) == 0:
+                st.caption("Zero candidates discovered - check the per-source "
+                          "status above; if every source shows 'ok: 0 URLs "
+                          "returned' rather than 'failed', the date range "
+                          "genuinely has nothing in these sitemaps yet.")
+            elif result.stats.get("candidates_after_prefilter", 0) == 0:
+                st.caption("Candidates were found but none survived the slug "
+                          "pre-filter - the company name/aliases/ticker may "
+                          "not match how this company's URLs are worded. Try "
+                          "adding an alias.")
 
     providers = _price_providers(config.ticker, config.benchmark, api_key,
                                  ticker_csv, benchmark_csv)

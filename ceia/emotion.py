@@ -137,7 +137,8 @@ class GoEmotionScorer:
         torch = self._torch
         id2label = dict(self._model.config.id2label.items())
         out: list[dict[str, float]] = []
-        for start in range(0, len(texts), self.batch_size):
+        total = len(texts)
+        for start in range(0, total, self.batch_size):
             batch = texts[start:start + self.batch_size]
             encoded = self._tokenizer(batch, return_tensors="pt", padding=True,
                                       truncation=True, max_length=64)
@@ -148,6 +149,7 @@ class GoEmotionScorer:
                 probabilities = torch.sigmoid(self._model(**encoded).logits)
             for row in probabilities:
                 out.append({id2label[i]: float(v) for i, v in enumerate(row)})
+            log.info("GoEmotions: scored %d/%d texts", min(start + self.batch_size, total), total)
         return out
 
     def score_items(self, items: list[NewsItem]) -> list[NewsItem]:

@@ -125,7 +125,9 @@ def economic_times(fetcher: Fetcher, start: date, end: date) -> list[Candidate]:
 def financial_express(fetcher: Fetcher, start: date, end: date) -> list[Candidate]:
     """Day sitemaps. Dated URLs resolve well beyond the index's ~92-day window."""
     out: list[Candidate] = []
-    for day in _days(start, end):
+    days = list(_days(start, end))
+    log.info("financial_express: scanning %d day(s) of sitemaps", len(days))
+    for i, day in enumerate(days, 1):
         xml = _fetch_xml(
             fetcher,
             f"https://www.financialexpress.com/sitemap.xml"
@@ -134,13 +136,20 @@ def financial_express(fetcher: Fetcher, start: date, end: date) -> list[Candidat
         if not xml:
             continue
         out.extend(Candidate(url, "financial_express", day) for url in _locs(xml))
+        # One request per day, each spaced by the rate limit, so a wide window
+        # can run minutes with no other output - a line per day makes that
+        # visible progress rather than an apparent hang.
+        if i % 5 == 0 or i == len(days):
+            log.info("financial_express: %d/%d days done, %d URLs so far", i, len(days), len(out))
     return out
 
 
 def business_line(fetcher: Fetcher, start: date, end: date) -> list[Candidate]:
     """Day sitemaps at /sitemap/archive/all/YYYYMMDD_N.xml, back to Dec 2010."""
     out: list[Candidate] = []
-    for day in _days(start, end):
+    days = list(_days(start, end))
+    log.info("business_line: scanning %d day(s) of sitemaps", len(days))
+    for i, day in enumerate(days, 1):
         # Days occasionally spill into a second part; stop at the first gap.
         for part in range(1, 4):
             xml = _fetch_xml(
@@ -154,6 +163,8 @@ def business_line(fetcher: Fetcher, start: date, end: date) -> list[Candidate]:
             if not urls:
                 break
             out.extend(Candidate(url, "business_line", day) for url in urls)
+        if i % 5 == 0 or i == len(days):
+            log.info("business_line: %d/%d days done, %d URLs so far", i, len(days), len(out))
     return out
 
 
