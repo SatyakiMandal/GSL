@@ -242,6 +242,10 @@ def build_html(analysis) -> str:
         )
     )
 
+    correlation = getattr(analysis, "correlation", {}) or {}
+    corr_display = (f"r = {correlation['r']:+.3f}"
+                    if correlation.get("r") is not None else "n/a")
+
     stats = "".join([
         _stat("Trading days", str(len(daily))),
         _stat("News items", str(news_count)),
@@ -249,6 +253,7 @@ def build_html(analysis) -> str:
         _stat("Return model", price.get("model", "—")),
         _stat("Beta", f"{price.get('beta', float('nan')):.2f}"),
         _stat("Published after close", str(news_stats.get("after_close", 0))),
+        _stat("Sentiment/return correlation", corr_display),
     ])
 
     caveats = "".join(f"<li>{escape(note)}</li>" for note in analysis.caveats)
@@ -352,6 +357,11 @@ alongside a shared "negative" FinBERT score can distinguish, say, a regulatory
 probe from a hostile FPO withdrawal) and never affects relevance, incident
 flagging, or the direction check. Scored on the headline only, and left blank
 below a 30% confidence threshold rather than forced to a low-confidence guess.</p>
+<p><strong>Sentiment/return correlation.</strong>
+{escape(correlation.get('note', 'Not computed.'))} A Pearson correlation
+across a handful of trading days is descriptive, not a significance test —
+treat it as a single additional lens on the same daily table above, not as
+proof that sentiment predicts price.</p>
 </div>
 
 <h3>Source availability</h3>

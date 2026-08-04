@@ -19,6 +19,7 @@ from ceia.eventstudy import (  # noqa: E402
     build_daily_table,
     caveats,
     rank_incidents,
+    sentiment_return_correlation,
 )
 from ceia.extract import IST  # noqa: E402
 from ceia.models import NewsItem  # noqa: E402
@@ -355,3 +356,83 @@ class TestShortWindowBehaviour:
         news = [item(d, -0.2, url=f"x{i}") for i, d in enumerate(days)]
         table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
         assert rank_incidents(table, frame, return_threshold=1.5) == []
+
+
+class TestSentimentReturnCorrelation:
+    def _table(self, days_returns_sentiments):
+        """days_returns_sentiments: list of (day, company_return, benchmark_return, sentiment).
+
+        Prepends one price-only anchor day with no news, since the first row
+        of any price series has a NaN return (pct_change() has nothing before
+        it to diff against) - putting news there would make it untestable
+        rather than testing the thing this class exists to test.
+        """
+        anchor = days_returns_sentiments[0][0] - pd.Timedelta(days=1)
+        returns_by_day = {anchor: (0.0, 0.0)}
+        returns_by_day.update({d: (r, b) for d, r, b, _ in days_returns_sentiments})
+        frame = price_frame(returns_by_day)
+        news = [item(d, s, url=f"n{i}") for i, (d, _, _, s) in enumerate(days_returns_sentiments)]
+        days = [d for d, _, _, _ in days_returns_sentiments]
+        return build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
+
+    def test_too_few_covered_days_returns_none(self):
+        days = [date(2023, 1, 3 + i) for i in range(2)]
+        table = self._table([(days[0], 0.02, 0.0, 0.8), (days[1], -0.02, 0.0, -0.8)])
+        result = sentiment_return_correlation(table)
+        assert result["r"] is None
+        assert result["n"] == 2
+        assert "too few" in result["note"]
+
+    def test_perfectly_aligned_sentiment_and_return_gives_r_near_one(self):
+        days = [date(2023, 1, 3 + i) for i in range(5)]
+        rows = [(days[0], 0.03, 0.0, 0.9), (days[1], -0.03, 0.0, -0.9),
+                (days[2], 0.05, 0.0, 0.95), (days[3], -0.05, 0.0, -0.95),
+                (days[4], 0.01, 0.0, 0.2)]
+        table = self._table(rows)
+        result = sentiment_return_correlation(table)
+        assert result["r"] is not None
+        assert result["r"] > 0.9
+        assert result["n"] == 5
+        # r and r_squared are each independently rounded to 4dp from the
+        # unrounded r, so squaring the already-rounded r only matches to
+        # about that same precision, not exactly.
+        assert result["r_squared"] == pytest.approx(result["r"] ** 2, abs=1e-4)
+
+    def test_inverted_relationship_gives_negative_r(self):
+        days = [date(2023, 1, 3 + i) for i in range(5)]
+        rows = [(days[0], 0.03, 0.0, -0.9), (days[1], -0.03, 0.0, 0.9),
+                (days[2], 0.05, 0.0, -0.95), (days[3], -0.05, 0.0, 0.95),
+                (days[4], 0.01, 0.0, -0.2)]
+        table = self._table(rows)
+        result = sentiment_return_correlation(table)
+        assert result["r"] < -0.9
+
+    def test_zero_variance_sentiment_is_undefined_not_a_crash(self):
+        days = [date(2023, 1, 3 + i) for i in range(4)]
+        rows = [(d, 0.01 * (i - 1), 0.0, 0.5) for i, d in enumerate(days)]
+        table = self._table(rows)
+        result = sentiment_return_correlation(table)
+        assert result["r"] is None
+        assert "zero variance" in result["note"]
+
+    def test_days_with_no_coverage_are_excluded_from_n(self):
+        """A silent day forces sentiment to 0.0 by construction; including it
+        would dilute the correlation with a manufactured non-signal point."""
+        days = [date(2023, 1, 3 + i) for i in range(6)]
+        returns_by_day = {days[0] - pd.Timedelta(days=1): (0.0, 0.0)}
+        returns_by_day.update({d: (0.01 * (i % 3 - 1), 0.0) for i, d in enumerate(days)})
+        frame = price_frame(returns_by_day)
+        news = [item(days[1], 0.8, url="a"), item(days[3], -0.8, url="b"),
+               item(days[5], 0.6, url="c")]
+        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
+        result = sentiment_return_correlation(table)
+        assert result["n"] == 3
+
+    def test_empty_table_does_not_crash(self):
+        table = pd.DataFrame(columns=[
+            "close", "return", "benchmark_return", "abnormal_return",
+            "unique_count", "weighted_sentiment",
+        ])
+        result = sentiment_return_correlation(table)
+        assert result["r"] is None
+        assert result["n"] == 0

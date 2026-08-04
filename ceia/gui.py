@@ -337,6 +337,13 @@ if submitted:
             "the price move."
         )
 
+    corr = analysis.correlation
+    if corr.get("r") is not None:
+        st.caption(f"Sentiment/return correlation: r = **{corr['r']:+.3f}** "
+                  f"(R² = {corr['r_squared']:.3f}, n = {corr['n']}) — {corr['note']}")
+    elif corr.get("note"):
+        st.caption(f"Sentiment/return correlation not computed — {corr['note']}")
+
     html_report = build_html(analysis)
     st.download_button("Download report.html", data=html_report,
                        file_name="report.html", mime="text/html")

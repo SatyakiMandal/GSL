@@ -301,6 +301,50 @@ def attach_headlines(incidents: list[Incident], items: list[NewsItem],
     return incidents
 
 
+def sentiment_return_correlation(table: pd.DataFrame) -> dict:
+    """Pearson correlation between daily sentiment and abnormal return.
+
+    Answers the tool's own founding question directly - does sentiment track
+    price - as a single number, rather than only the per-day incident flags.
+    Descriptive, not inferential: over the handful of trading days a typical
+    run covers, this has a wide confidence interval and is not a claim of
+    statistical significance, exactly the same caveat this tool already makes
+    about everything else it reports. Only news-carrying days are included; a
+    silent day forces sentiment to 0 by construction, which would dilute the
+    correlation with manufactured non-signal rather than real absence of it.
+    """
+    covered = table[table["unique_count"] > 0] if len(table) else table
+    # The first row of any price series has no prior close for pct_change()
+    # to work with, so its return (and everything derived from it) is NaN by
+    # construction - not a data problem, just how day one of a series works.
+    # A single NaN silently poisons corrcoef's result to NaN with no error,
+    # so it must be dropped explicitly rather than trusted to "just work".
+    covered = covered.dropna(subset=["weighted_sentiment", "abnormal_return"])
+    n = len(covered)
+    if n < 3:
+        return {
+            "n": n, "r": None, "r_squared": None,
+            "note": (f"only {n} news-carrying day(s) with a usable abnormal "
+                     "return - too few to compute a meaningful correlation "
+                     "(need at least 3)."),
+        }
+    sentiment = covered["weighted_sentiment"].to_numpy(dtype=float)
+    abnormal = covered["abnormal_return"].to_numpy(dtype=float)
+    if np.std(sentiment) == 0 or np.std(abnormal) == 0:
+        return {
+            "n": n, "r": None, "r_squared": None,
+            "note": ("sentiment or abnormal return has zero variance across "
+                     "covered days - correlation is undefined."),
+        }
+    r = float(np.corrcoef(sentiment, abnormal)[0, 1])
+    return {
+        "n": n, "r": round(r, 4), "r_squared": round(r * r, 4),
+        "note": (f"Pearson r over {n} news-carrying day(s) in this run; "
+                 "descriptive only, not a significance test, and not "
+                 "comparable across runs with different day counts."),
+    }
+
+
 def caveats(table: pd.DataFrame, incidents: list[Incident],
             model_kind: str, scale_source: str) -> list[str]:
     """The limitations this specific run has to state (PRD Section 9)."""

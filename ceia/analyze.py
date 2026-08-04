@@ -42,6 +42,8 @@ class Analysis:
     news_meta: dict
     caveats: list[str] = field(default_factory=list)
     unattributed: list[NewsItem] = field(default_factory=list)
+    correlation: dict = field(default_factory=dict)
+    emotion_summary: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         table = self.daily.reset_index()
@@ -56,6 +58,8 @@ class Analysis:
             "prices": self.price_meta,
             "news": self.news_meta,
             "caveats": self.caveats,
+            "sentiment_return_correlation": self.correlation,
+            "emotion_return_summary": self.emotion_summary,
             "unattributed_items": [
                 {"url": i.url, "source": i.source, "headline": i.headline,
                  "reason": i.timestamp_confidence}
@@ -109,6 +113,7 @@ def analyse(
         coverage_threshold=coverage_threshold, return_threshold=return_threshold,
     )
     eventstudy.attach_headlines(incidents, items)
+    correlation = eventstudy.sentiment_return_correlation(table)
 
     return Analysis(
         config=config,
@@ -119,6 +124,7 @@ def analyse(
         caveats=eventstudy.caveats(table, incidents, model.kind,
                                    price_meta.get("ar_scale_source", "")),
         unattributed=align.unattributed(items),
+        correlation=correlation,
     )
 
 
@@ -144,6 +150,13 @@ def _print(analysis: Analysis) -> None:
     if analysis.unattributed:
         print(f"        {len(analysis.unattributed)} item(s) had no usable "
               f"timestamp and were NOT attributed to any trading day")
+
+    corr = analysis.correlation
+    if corr.get("r") is not None:
+        print(f"Sentiment/return correlation: r={corr['r']:+.3f} "
+              f"(R2={corr['r_squared']:.3f}, n={corr['n']}) — {corr['note']}")
+    elif corr:
+        print(f"Sentiment/return correlation: not computed — {corr.get('note', '')}")
 
     if analysis.daily.empty:
         print("\nNo trading days in the analysis window.")
