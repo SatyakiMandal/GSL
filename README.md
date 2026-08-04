@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-270 tests
+277 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -32,18 +32,50 @@ the price library returns clean data.
 **The full write-up is [`docs/phase0-findings.md`](docs/phase0-findings.md).**
 The short version:
 
-- **Four sources are usable, all verified end to end**, and all serve
+- **Five sources are usable, all verified end to end**, and all serve
   **plain HTML** — no headless browser needed anywhere. Business Standard proved
-  unreachable and was replaced by Moneycontrol, so the count is back to four.
+  unreachable and was replaced by Moneycontrol; Business Today was added later
+  as a fifth, after checking four more candidates and rejecting three of them.
   - **Economic Times**: month-partitioned sitemaps back to **October 2001**;
     JSON-LD with real `datePublished` and full article body.
   - **Business Line**: day-partitioned archive back to **December 2010** — the
-    deepest of the four. No JSON-LD; timestamps come from meta tags.
+    deepest of the five. No JSON-LD; timestamps come from meta tags.
   - **Financial Express**: day-partitioned sitemaps. Its index advertises only
     ~92 days, but dated URLs resolve far beyond that, so historical ranges work.
   - **Moneycontrol**: year index → month sitemaps; 8,164 URLs for January 2023
     alone. Nests its JSON-LD inside an `@graph` and uses
     `og:article:published_time`, both of which extraction handles.
+  - **Business Today**: day-partitioned sitemaps 1,000 days deep, same
+    `?yyyy=&mm=&dd=` query shape as Financial Express. Real JSON-LD
+    `articleBody`, no extraction code changes needed. Its edge occasionally
+    (not systematically — verified with a five-request burst that all
+    succeeded) returns an Access Denied page for a single date; treated like
+    any other single-day fetch failure, not a reason to disable the source.
+    Adding it caught a real, general bug: its `<loc>`/`<lastmod>` values are
+    CDATA-wrapped (`<loc><![CDATA[ https://... ]]></loc>`), which the sitemap
+    regex parser couldn't see past — it silently matched zero URLs rather than
+    erroring, indistinguishable from "no coverage that day" without reading
+    the raw response. Fixed in the shared parser, not a per-source special
+    case, so any future CDATA-wrapped source works too.
+- **Four more sources were checked and rejected**, same due diligence as
+  above — a name being well-known isn't enough on its own:
+  - **NDTV Profit** — Akamai returns "Access Denied" for `robots.txt` itself,
+    same failure as Business Standard. Permission cannot be established.
+  - **LiveMint** — permissive `robots.txt`, but its declared sitemaps only
+    cover `today.xml`/`yesterday.xml` plus category/commodity feeds; no
+    historical date-partitioned route was found, so it can't support an
+    arbitrary past date range the way the other five can.
+  - **Zee Business** — permissive `robots.txt` (its bot-name-specific group
+    listing ClaudeBot/GPTBot/etc. carries no actual directives, and doesn't
+    match this tool's own declared identity regardless — same reasoning as
+    Financial Express/Business Line's Anthropic-specific blocks not applying
+    here). But its sitemap only covers a rolling few days of recent news plus
+    year-archives that stop at 2019 — no route to, say, mid-2025.
+  - **CNBC-TV18** — permissive `robots.txt` and a clean daily sitemap index,
+    but that index only holds a rolling ~366 days, so it can't reliably serve
+    a fixed historical range as "today" moves forward. A candidate worth
+    revisiting for recent-window runs specifically, just not for the general
+    case.
 - **The search route the PRD assumed is disallowed** on FE (`/*?s=`) and Business
   Line (`/search/*`) for every user agent, so ingestion uses each site's
   robots.txt-declared sitemaps — which are date-partitioned and reach further
@@ -81,7 +113,7 @@ FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
 front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 270 tests, no network required
+pytest -q     # 277 tests, no network required
 ```
 
 ### Run the spike
@@ -288,7 +320,7 @@ which is what the PRD sanctions. Nothing tries to get around a gate.
 
 A full-year run repeatedly took 30-90 minutes, mostly `financial_express` and
 `business_line` fetching one sitemap per day, one request at a time.
-Discovery now runs all four sources concurrently (`discover()`, one worker
+Discovery now runs all five sources concurrently (`discover()`, one worker
 thread per source) and article fetching runs `--workers` candidates at once
 (default 8, `fetch_and_parse()`). Neither makes the crawl faster by hitting
 any single site harder — that would trade the PRD's rate-limit obligation for
@@ -296,7 +328,7 @@ speed, which is not a trade this project makes. `Fetcher` gives every origin
 its own lock: two threads hitting the *same* site are serialised exactly as
 if there were only one thread (still `min_interval` seconds apart, still
 honouring a declared `Crawl-delay`), while requests to *different* sites run
-fully in parallel. What speeds up is wall-clock time — four sources that used
+fully in parallel. What speeds up is wall-clock time — five sources that used
 to run one after another now overlap, and the whole point of interleaving
 candidates across sources before fetching (see above) is that most
 consecutive candidates in that list are already different origins, so a
@@ -306,6 +338,21 @@ fine once"): same-origin requests never overlap in time under load,
 different-origin requests do, and shared state (`items`/`errors`/`seen`)
 comes out with the identical counts a sequential run would produce, run
 repeatedly to catch intermittent races.
+
+**Honest measurement, not just theory:** a real 45-day run (`--limit 500`)
+took 5m02s at `--workers 1` and 4m50s at `--workers 8` — a real but modest
+~4% improvement, not the dramatic win the design might suggest. Why: discovery
+is bounded by whichever single source is slowest (`business_line`'s day-by-day
+sitemap fetches), and that floor doesn't move regardless of `--workers`, which
+only controls the *fetch* stage. For this window, discovery dominated total
+time enough that fetch-stage concurrency barely showed. The gain this was
+actually built for is a **full-year** run, where `financial_express` and
+`business_line` each independently take 20-35 minutes — running them
+concurrently with each other (rather than after each other) turns that sum
+into a max, which is where the real win shows up. That specific comparison is
+expensive to run twice (each side is 30-90 minutes) and hasn't been measured
+end-to-end yet; treat the full-year improvement as expected from the
+mechanism, not independently confirmed the way the 45-day number above is.
 
 ### Emotion (GoEmotions) — secondary texture, not a second vote
 
@@ -575,9 +622,10 @@ the method rather than a disclaimer:
   range yields a handful of genuinely distinct incident days — far too few for
   the sentiment/abnormal-return relationship to carry statistical significance.
   A real event study spans dozens of companies and events. The PRD (Section 9)
-  anticipated this at four sources, and four is what the tool ends up with —
-  Moneycontrol standing in for the unreachable Business Standard — so the caveat
-  binds exactly as the PRD framed it.
+  anticipated this at four sources; the tool ends up with five — Moneycontrol
+  standing in for the unreachable Business Standard, Business Today added
+  later — but the underlying caveat binds the same way regardless of source
+  count: it is still one company, one date range.
 - **Coincidence in time is not causation.** The tool reports that coverage
   *coincided with* a price move. Benchmark-adjusting every return is the main
   defence against reading a market-wide move as company-specific news, but it

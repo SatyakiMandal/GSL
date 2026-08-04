@@ -23,9 +23,17 @@ from .fetcher import Fetcher, RobotsDisallowed
 
 log = logging.getLogger(__name__)
 
-_LOC_RE = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.I)
+# Some sites (Business Today, e.g.) wrap <loc>/<lastmod> content in CDATA -
+# <loc><![CDATA[ https://... ]]></loc> - which the bare [^<\s]+ capture can't
+# see past, since a CDATA opener starts with '<'. Verified as a real, not
+# hypothetical, bug: it silently matched zero URLs for Business Today rather
+# than erroring, which would have looked exactly like "no coverage that day"
+# instead of "the parser can't read this sitemap's shape". Both the CDATA
+# wrapper and its absence match with the optional non-capturing groups below.
+_LOC_RE = re.compile(r"<loc>\s*(?:<!\[CDATA\[)?\s*([^<\s]+)\s*(?:\]\]>)?\s*</loc>", re.I)
 _URL_BLOCK_RE = re.compile(r"<url>(.*?)</url>", re.S | re.I)
-_LASTMOD_RE = re.compile(r"<lastmod>\s*([^<\s]+)\s*</lastmod>", re.I)
+_LASTMOD_RE = re.compile(
+    r"<lastmod>\s*(?:<!\[CDATA\[)?\s*([^<\s]+)\s*(?:\]\]>)?\s*</lastmod>", re.I)
 
 # Excel-style serial used by the Economic Times archive: days since 1899-12-30.
 _ET_EPOCH = date(1899, 12, 30)
@@ -193,11 +201,45 @@ def moneycontrol(fetcher: Fetcher, start: date, end: date) -> list[Candidate]:
     return out
 
 
+def business_today(fetcher: Fetcher, start: date, end: date) -> list[Candidate]:
+    """Day sitemaps at /rssfeeds/date-wise-story-sitemap.xml?yyyy=&mm=&dd=.
+
+    Same query-string shape as Financial Express's day sitemap. Its edge
+    (Akamai, same as Business Standard and NDTV Profit) occasionally returns
+    an "Access Denied" HTML page in place of the real sitemap for no
+    reproducible reason - verified as intermittent, not a real block: the
+    same date retried moments later, and every date in a five-request burst
+    with no delay at all, both came back 200 with real content. Treated the
+    same as any other single-day fetch failure - skipped, logged, the run
+    continues - rather than disabling the whole source over a transient
+    edge hiccup.
+    """
+    out: list[Candidate] = []
+    days = list(_days(start, end))
+    log.info("business_today: scanning %d day(s) of sitemaps", len(days))
+    for i, day in enumerate(days, 1):
+        xml = _fetch_xml(
+            fetcher,
+            "https://www.businesstoday.in/rssfeeds/date-wise-story-sitemap.xml"
+            f"?yyyy={day.year}&mm={day.month:02d}&dd={day.day:02d}",
+        )
+        if not xml:
+            continue
+        for url, when in _loc_lastmod_pairs(xml):
+            if when and not (start - timedelta(days=1) <= when <= end + timedelta(days=1)):
+                continue
+            out.append(Candidate(url, "business_today", when))
+        if i % 5 == 0 or i == len(days):
+            log.info("business_today: %d/%d days done, %d URLs so far", i, len(days), len(out))
+    return out
+
+
 STRATEGIES = {
     "economic_times": economic_times,
     "financial_express": financial_express,
     "business_line": business_line,
     "moneycontrol": moneycontrol,
+    "business_today": business_today,
 }
 
 

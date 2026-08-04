@@ -59,6 +59,13 @@ BODY_SELECTORS: dict[str, list[str]] = {
                       "[itemprop='articleBody']"],
     "moneycontrol": ["div#contentdata", "div.content_wrapper",
                      "div.article_content"],
+    # Belt-and-suspenders only: Business Today's JSON-LD already carries a
+    # full articleBody, which extract_body() tries first and normally
+    # succeeds on, so this DOM path is a fallback for the rare article that
+    # lacks it. field--name-body is Drupal's body-field class; there are
+    # usually two "text-formatted" divs on the page and this is the one that
+    # actually holds the article, not a teaser.
+    "business_today": ["div.field--name-body", "article"],
 }
 
 

@@ -113,6 +113,32 @@ MONEYCONTROL = Source(
     ),
 )
 
+BUSINESS_TODAY = Source(
+    key="business_today",
+    name="Business Today",
+    origin="https://www.businesstoday.in",
+    search_url="https://www.businesstoday.in/search?searchtext=adani",
+    discovery=[
+        # Day-partitioned: /rssfeeds/date-wise-story-sitemap.xml?yyyy=&mm=&dd=,
+        # indexed 1,000 days deep at /rssfeeds/date-wise-stories-sitemap.xml.
+        "https://www.businesstoday.in/rssfeeds/date-wise-stories-sitemap.xml",
+        "https://www.businesstoday.in/rssfeeds/date-wise-story-sitemap.xml?yyyy=2025&mm=01&dd=25",
+    ],
+    sample_article=(
+        "https://www.businesstoday.in/technology/news/story/"
+        "apple-unveils-new-mac-studio-with-m4-max-and-m3-ultra-466869-2025-03-05"
+    ),
+    notes=(
+        "robots.txt is permissive (User-agent: * / Allow: /) and names no "
+        "Anthropic agent. Akamai edge (same as Business Standard and NDTV "
+        "Profit) occasionally returns an Access Denied page for a single "
+        "date query, verified as an intermittent, not systematic, edge "
+        "hiccup - a retry or even an immediate different-date request both "
+        "succeeded. Article pages carry JSON-LD NewsArticle with a full "
+        "articleBody."
+    ),
+)
+
 BUSINESS_STANDARD = Source(
     key="business_standard",
     name="Business Standard",
@@ -129,8 +155,9 @@ BUSINESS_STANDARD = Source(
 # Business Standard is retained only so the probe keeps reporting why it is
 # unavailable; ingestion uses ACTIVE_SOURCES.
 ALL_SOURCES = [ECONOMIC_TIMES, FINANCIAL_EXPRESS, BUSINESS_LINE,
-               MONEYCONTROL, BUSINESS_STANDARD]
-ACTIVE_SOURCES = [ECONOMIC_TIMES, FINANCIAL_EXPRESS, BUSINESS_LINE, MONEYCONTROL]
+               MONEYCONTROL, BUSINESS_TODAY, BUSINESS_STANDARD]
+ACTIVE_SOURCES = [ECONOMIC_TIMES, FINANCIAL_EXPRESS, BUSINESS_LINE, MONEYCONTROL,
+                  BUSINESS_TODAY]
 
 # User-agent tokens that these sites use to refuse AI crawlers. The probe
 # reports which of them each site blocks, because it changes who may run this

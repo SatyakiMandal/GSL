@@ -37,7 +37,8 @@ from .sentiment import FinBertScorer
 
 log = logging.getLogger(__name__)
 
-DEFAULT_SOURCES = ["economic_times", "financial_express", "business_line", "moneycontrol"]
+DEFAULT_SOURCES = ["economic_times", "financial_express", "business_line", "moneycontrol",
+                   "business_today"]
 
 # Business Standard is deliberately absent: Phase 0 found its Akamai edge
 # returns 403 for every request including robots.txt, so permission to crawl
