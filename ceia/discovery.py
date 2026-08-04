@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -205,26 +206,45 @@ def discover(
     sources: list[str],
     start: date,
     end: date,
+    max_workers: int = 4,
 ) -> tuple[list[Candidate], dict[str, str]]:
-    """Collect candidates across sources.
+    """Collect candidates across sources, one worker thread per source.
 
     Returns the candidates plus a per-source status map. A source that blocks
     us or changes layout degrades to an error string instead of killing the
     run, and the report states which sources were unavailable (Section 10).
+
+    Running sources concurrently is safe and does not make the crawl any less
+    polite: each source is a different origin, and ``Fetcher`` serialises
+    requests *within* an origin via its own lock regardless of how many
+    threads call it (see ``fetcher.py``). What changes is wall-clock time -
+    financial_express and business_line fetch one sitemap per day and were
+    the dominant cost on a wide date range (a full year took ~35 minutes
+    combined, sequentially); run concurrently with the two fast month-based
+    sources, total discovery time drops toward whichever single source is
+    slowest, not the sum of all four.
     """
+    runnable = [key for key in sources if key in STRATEGIES]
+    status: dict[str, str] = {
+        key: "unknown source" for key in sources if key not in STRATEGIES
+    }
     candidates: list[Candidate] = []
-    status: dict[str, str] = {}
-    for key in sources:
-        strategy = STRATEGIES.get(key)
-        if strategy is None:
-            status[key] = "unknown source"
-            continue
-        try:
-            found = strategy(fetcher, start, end)
-        except Exception as exc:
-            status[key] = f"failed: {type(exc).__name__}: {exc}"
-            log.exception("discovery failed for %s", key)
-            continue
-        candidates.extend(found)
-        status[key] = f"ok: {len(found)} candidate URLs" if found else "no URLs returned"
+    if not runnable:
+        return candidates, status
+
+    with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(runnable)))) as executor:
+        future_to_key = {
+            executor.submit(STRATEGIES[key], fetcher, start, end): key
+            for key in runnable
+        }
+        for future in as_completed(future_to_key):
+            key = future_to_key[future]
+            try:
+                found = future.result()
+            except Exception as exc:
+                status[key] = f"failed: {type(exc).__name__}: {exc}"
+                log.exception("discovery failed for %s", key)
+                continue
+            candidates.extend(found)
+            status[key] = f"ok: {len(found)} candidate URLs" if found else "no URLs returned"
     return candidates, status

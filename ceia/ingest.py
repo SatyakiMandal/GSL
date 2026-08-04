@@ -20,6 +20,8 @@ import argparse
 import json
 import logging
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -188,49 +190,83 @@ def in_range(items: list[NewsItem], start: date, end: date) -> list[NewsItem]:
 
 
 def fetch_and_parse(fetcher: Fetcher, candidates: list[Candidate],
-                    limit: int | None = None) -> tuple[list[NewsItem], dict[str, int]]:
+                    limit: int | None = None,
+                    max_workers: int = 8) -> tuple[list[NewsItem], dict[str, int]]:
+    """Fetch and parse every candidate, ``max_workers`` at a time.
+
+    Candidates arrive interleaved across sources (see ``interleave()``), so
+    consecutive entries are usually different origins - a thread pool here
+    gets several origins' rate-limited fetches running at once instead of
+    one after another, without fetching any single origin any faster than
+    ``Fetcher`` already allows (its per-origin lock serialises same-origin
+    requests regardless of thread count). All mutable state (``items``,
+    ``errors``, ``seen``) is shared across worker threads and updated inside
+    one lock; contention there is negligible next to the network I/O this
+    spends its time on.
+    """
     items: list[NewsItem] = []
     errors = {"robots": 0, "http": 0, "parse": 0, "empty": 0}
     seen: set[str] = set()
     total = len(candidates)
-    for n, candidate in enumerate(candidates, 1):
-        if limit is not None and len(items) >= limit:
-            break
-        if candidate.url in seen:
-            continue
-        seen.add(candidate.url)
+    state_lock = threading.Lock()
+    stop = threading.Event()
+    completed = 0
+
+    def process_one(candidate: Candidate) -> None:
+        nonlocal completed
+        if stop.is_set():
+            return
+        with state_lock:
+            if candidate.url in seen:
+                return
+            seen.add(candidate.url)
+
+        error_kind: str | None = None
+        item: NewsItem | None = None
         try:
             response = fetcher.get(candidate.url)
         except RobotsDisallowed:
-            errors["robots"] += 1
-            continue
+            error_kind = "robots"
         except Exception as exc:
             log.debug("fetch failed %s: %s", candidate.url, exc)
-            errors["http"] += 1
-            continue
-        if response.status != 200:
-            errors["http"] += 1
-            continue
-        try:
-            parsed = parse_article(response.text, candidate.url, candidate.source)
-        except Exception as exc:
-            log.debug("parse failed %s: %s", candidate.url, exc)
-            errors["parse"] += 1
-            continue
-        if not parsed["headline"]:
-            errors["empty"] += 1
-            continue
-        items.append(NewsItem(
-            **parsed,
-            fetched_at=response.fetched_at,
-            content_sha256=response.sha256,
-        ))
-        # Each fetch is rate-limited (>=2s/origin), so a few hundred candidates
-        # can take many minutes; without this a long stretch of no items kept
-        # (paywalls, off-topic slugs) looks identical to the process hanging.
-        if n % 20 == 0 or n == total:
-            log.info("fetched %d/%d candidates, %d parsed OK, errors=%s",
-                     n, total, len(items), errors)
+            error_kind = "http"
+        else:
+            if response.status != 200:
+                error_kind = "http"
+            else:
+                try:
+                    parsed = parse_article(response.text, candidate.url, candidate.source)
+                except Exception as exc:
+                    log.debug("parse failed %s: %s", candidate.url, exc)
+                    error_kind = "parse"
+                else:
+                    if not parsed["headline"]:
+                        error_kind = "empty"
+                    else:
+                        item = NewsItem(**parsed, fetched_at=response.fetched_at,
+                                        content_sha256=response.sha256)
+
+        with state_lock:
+            completed += 1
+            n = completed
+            if error_kind is not None:
+                errors[error_kind] += 1
+            elif item is not None:
+                if limit is not None and len(items) >= limit:
+                    stop.set()
+                else:
+                    items.append(item)
+            # Each fetch is rate-limited (>=2s/origin), so hundreds of
+            # candidates can take minutes even in parallel; without this a
+            # long stretch of no items kept (paywalls, off-topic slugs) looks
+            # identical to the process hanging.
+            if n % 20 == 0 or n == total:
+                log.info("fetched %d/%d candidates, %d parsed OK, errors=%s",
+                         n, total, len(items), errors)
+
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
+        list(executor.map(process_one, candidates))
+
     return items, errors
 
 
@@ -239,7 +275,8 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
         emotion_scorer: GoEmotionScorer | None = None,
         limit: int | None = None,
         skip_sentiment: bool = False,
-        skip_emotion: bool = False) -> IngestResult:
+        skip_emotion: bool = False,
+        max_workers: int = 8) -> IngestResult:
     fetcher = fetcher or Fetcher()
     sources = [s for s in (config.sources or DEFAULT_SOURCES) if s not in DISABLED_SOURCES]
     result = IngestResult(config=config, disabled_sources=dict(DISABLED_SOURCES))
@@ -258,7 +295,8 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
         log.info("capped to %d candidates, spread across the full date range "
                  "rather than just its earliest days", len(narrowed))
 
-    parsed_items, errors = fetch_and_parse(fetcher, narrowed, limit=limit)
+    parsed_items, errors = fetch_and_parse(fetcher, narrowed, limit=limit,
+                                           max_workers=max_workers)
     items = in_range(parsed_items, config.start, config.end)
     log.info("parsed %d articles, %d inside the requested window",
              len(parsed_items), len(items))
@@ -324,6 +362,14 @@ def main() -> None:
                         help="Cap articles fetched, evenly spread across the "
                              "whole date range rather than just its earliest "
                              "days; useful for a quick trial run.")
+    parser.add_argument("--workers", type=int, default=8,
+                        help="Concurrent article fetches (default 8). Discovery "
+                             "across the 4 sources always runs concurrently, "
+                             "capped at one worker per source. Requests to any "
+                             "single origin are still serialised at --min-interval "
+                             "regardless of --workers - this only lets DIFFERENT "
+                             "origins' rate-limited fetches overlap instead of "
+                             "queueing behind each other.")
     parser.add_argument("--skip-sentiment", action="store_true",
                         help="Skip FinBERT (no model download).")
     parser.add_argument("--skip-emotion", action="store_true",
@@ -369,7 +415,8 @@ def main() -> None:
                       min_interval=args.min_interval)
     result = run(config, fetcher=fetcher, limit=args.limit,
                  skip_sentiment=args.skip_sentiment,
-                 skip_emotion=args.skip_emotion)
+                 skip_emotion=args.skip_emotion,
+                 max_workers=args.workers)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

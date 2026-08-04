@@ -132,7 +132,7 @@ def _price_providers(ticker: str, benchmark: str, api_key: str,
 
 def _run_analysis(config: RunConfig, source_mode: str, limit: int | None,
                   skip_sentiment: bool, skip_emotion: bool,
-                  api_key: str, ticker_csv, benchmark_csv) -> Analysis:
+                  api_key: str, ticker_csv, benchmark_csv, workers: int = 8) -> Analysis:
     if source_mode == "Bundled Adani corpus (instant, no scraping)":
         if not BUNDLED_CORPUS.exists():
             raise FileNotFoundError(f"{BUNDLED_CORPUS} is missing from this checkout")
@@ -148,6 +148,7 @@ def _run_analysis(config: RunConfig, source_mode: str, limit: int | None,
             ingest.run, config, fetcher=fetcher, scorer=scorer,
             emotion_scorer=emotion_scorer, limit=limit,
             skip_sentiment=skip_sentiment, skip_emotion=skip_emotion,
+            max_workers=workers,
         )
         items = result.items
         news_meta = result.to_dict()
@@ -255,6 +256,16 @@ with st.form("run_config"):
                  "days, so a low cap thins out coverage everywhere instead of "
                  "silently truncating the end of the window.",
         )
+        workers = st.number_input(
+            "Concurrent fetches (live scraping only)", value=8, min_value=1,
+            max_value=32, step=1,
+            help="How many articles to fetch at once. Discovery across the 4 "
+                 "sources always runs concurrently, one per source. Requests "
+                 "to any single site are still rate-limited exactly as "
+                 "before regardless of this setting - it only lets DIFFERENT "
+                 "sites' fetches overlap instead of queueing behind each "
+                 "other.",
+        )
         skip_sentiment = st.checkbox("Skip FinBERT sentiment (no model download)")
         skip_emotion = st.checkbox("Skip GoEmotions (no model download)")
 
@@ -293,6 +304,7 @@ if submitted:
                 config, source_mode, limit=int(limit) or None,
                 skip_sentiment=skip_sentiment, skip_emotion=skip_emotion,
                 api_key=api_key, ticker_csv=ticker_csv, benchmark_csv=benchmark_csv,
+                workers=int(workers),
             )
     except PriceError as exc:
         st.error(

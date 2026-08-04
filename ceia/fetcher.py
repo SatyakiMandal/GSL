@@ -11,6 +11,15 @@ enforces four things the PRD asks for in Sections 10 and 12:
   company/date range does not re-scrape anything;
 * every fetch is appended to a JSONL provenance log with a content hash, so a
   number in a report can be traced back to the exact bytes it came from.
+
+Callers (``discover()``, ``fetch_and_parse()``) may drive this from multiple
+threads at once, since the four sources are independent origins with nothing
+to serialise between them. What must never happen is two threads racing on
+the SAME origin's rate limit and both slipping through ``_wait`` at once,
+which would silently fetch that one site faster than configured - a real
+politeness violation, not just a bug. Every origin gets its own
+:class:`threading.RLock`; different origins never block each other, same-
+origin requests are strictly serialised exactly as they were single-threaded.
 """
 
 from __future__ import annotations
@@ -19,6 +28,7 @@ import hashlib
 import json
 import logging
 import random
+import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -84,6 +94,26 @@ class Fetcher:
         )
         self._robots: dict[str, RobotsPolicy] = {}
         self._last_request: dict[str, float] = {}
+        self._origin_locks: dict[str, threading.RLock] = {}
+        self._origin_locks_guard = threading.Lock()
+        self._provenance_lock = threading.Lock()
+
+    # ------------------------------------------------------------- threading
+
+    def _lock_for(self, origin: str) -> threading.RLock:
+        """One re-entrant lock per origin, created lazily and thread-safely.
+
+        Re-entrant because ``get()`` holds this lock across ``check()``,
+        which calls ``robots_for()``, which acquires the same origin's lock
+        again on first use - a plain ``Lock`` would deadlock a thread against
+        itself there.
+        """
+        with self._origin_locks_guard:
+            lock = self._origin_locks.get(origin)
+            if lock is None:
+                lock = threading.RLock()
+                self._origin_locks[origin] = lock
+            return lock
 
     # ---------------------------------------------------------------- robots
 
@@ -94,25 +124,28 @@ class Fetcher:
 
     def robots_for(self, url: str) -> RobotsPolicy:
         origin = self._origin(url)
-        if origin not in self._robots:
-            robots_url = f"{origin}/robots.txt"
-            self._wait(origin)
-            try:
-                resp = self._session.get(robots_url, timeout=self.timeout)
-                text, status = resp.text, resp.status_code
-            except requests.RequestException as exc:
-                log.warning("could not fetch %s: %s", robots_url, exc)
-                text, status = None, None
-            self._last_request[origin] = time.monotonic()
-            self._robots[origin] = RobotsPolicy(origin, text, status)
-            self._log_provenance(
-                url=robots_url,
-                final_url=robots_url,
-                status=status if status is not None else -1,
-                body=text or "",
-                from_cache=False,
-                note="robots.txt",
-            )
+        if origin in self._robots:
+            return self._robots[origin]
+        with self._lock_for(origin):
+            if origin not in self._robots:  # re-check: lost the race to fetch it
+                robots_url = f"{origin}/robots.txt"
+                self._wait(origin)
+                try:
+                    resp = self._session.get(robots_url, timeout=self.timeout)
+                    text, status = resp.text, resp.status_code
+                except requests.RequestException as exc:
+                    log.warning("could not fetch %s: %s", robots_url, exc)
+                    text, status = None, None
+                self._last_request[origin] = time.monotonic()
+                self._robots[origin] = RobotsPolicy(origin, text, status)
+                self._log_provenance(
+                    url=robots_url,
+                    final_url=robots_url,
+                    status=status if status is not None else -1,
+                    body=text or "",
+                    from_cache=False,
+                    note="robots.txt",
+                )
         return self._robots[origin]
 
     def check(self, url: str) -> tuple[bool, str]:
@@ -166,14 +199,25 @@ class Fetcher:
             "user_agent": self.user_agent,
             "note": note,
         }
-        with self.provenance_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record) + "\n")
+        # Threads for different origins can log provenance at the same time;
+        # a single shared file needs its own lock, independent of any origin.
+        with self._provenance_lock:
+            with self.provenance_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record) + "\n")
         return digest
 
     # ------------------------------------------------------------------ get
 
     def get(self, url: str, force: bool = False) -> Response:
-        """Fetch ``url``, honouring robots.txt, cache, and rate limits."""
+        """Fetch ``url``, honouring robots.txt, cache, and rate limits.
+
+        Safe to call from multiple threads at once (see the module
+        docstring): everything that touches this URL's origin - the robots
+        check, the rate-limit wait, the request itself - runs inside that
+        origin's lock, so concurrent callers on the same origin are
+        serialised exactly as if there were only one thread, while callers
+        on different origins never wait on each other.
+        """
         cache_path = self._cache_path(url)
         if cache_path.exists() and not force:
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -187,48 +231,63 @@ class Fetcher:
                 sha256=payload["sha256"],
             )
 
-        allowed, reason = self.check(url)
-        if not allowed:
-            raise RobotsDisallowed(f"{url}: {reason}")
-
         origin = self._origin(url)
-        last_exc: Exception | None = None
-        for attempt in range(self.max_retries):
-            self._wait(origin)
-            try:
-                resp = self._session.get(url, timeout=self.timeout, allow_redirects=True)
-            except requests.RequestException as exc:
-                last_exc = exc
+        with self._lock_for(origin):
+            # Another thread may have fetched (and cached) this exact URL
+            # while we were waiting for the origin lock.
+            if cache_path.exists() and not force:
+                payload = json.loads(cache_path.read_text(encoding="utf-8"))
+                return Response(
+                    url=url,
+                    final_url=payload["final_url"],
+                    status=payload["status"],
+                    text=payload["text"],
+                    from_cache=True,
+                    fetched_at=payload["fetched_at"],
+                    sha256=payload["sha256"],
+                )
+
+            allowed, reason = self.check(url)
+            if not allowed:
+                raise RobotsDisallowed(f"{url}: {reason}")
+
+            last_exc: Exception | None = None
+            for attempt in range(self.max_retries):
+                self._wait(origin)
+                try:
+                    resp = self._session.get(url, timeout=self.timeout, allow_redirects=True)
+                except requests.RequestException as exc:
+                    last_exc = exc
+                    self._last_request[origin] = time.monotonic()
+                    time.sleep(2**attempt + random.random())
+                    continue
                 self._last_request[origin] = time.monotonic()
-                time.sleep(2**attempt + random.random())
-                continue
-            self._last_request[origin] = time.monotonic()
 
-            if resp.status_code in (429, 500, 502, 503, 504) and attempt < self.max_retries - 1:
-                time.sleep(2 ** (attempt + 1) + random.random())
-                continue
+                if resp.status_code in (429, 500, 502, 503, 504) and attempt < self.max_retries - 1:
+                    time.sleep(2 ** (attempt + 1) + random.random())
+                    continue
 
-            fetched_at = datetime.now(timezone.utc).isoformat()
-            digest = self._log_provenance(
-                url, resp.url, resp.status_code, resp.text, from_cache=False
-            )
-            payload = {
-                "url": url,
-                "final_url": resp.url,
-                "status": resp.status_code,
-                "text": resp.text,
-                "fetched_at": fetched_at,
-                "sha256": digest,
-            }
-            cache_path.write_text(json.dumps(payload), encoding="utf-8")
-            return Response(
-                url=url,
-                final_url=resp.url,
-                status=resp.status_code,
-                text=resp.text,
-                from_cache=False,
-                fetched_at=fetched_at,
-                sha256=digest,
-            )
+                fetched_at = datetime.now(timezone.utc).isoformat()
+                digest = self._log_provenance(
+                    url, resp.url, resp.status_code, resp.text, from_cache=False
+                )
+                payload = {
+                    "url": url,
+                    "final_url": resp.url,
+                    "status": resp.status_code,
+                    "text": resp.text,
+                    "fetched_at": fetched_at,
+                    "sha256": digest,
+                }
+                cache_path.write_text(json.dumps(payload), encoding="utf-8")
+                return Response(
+                    url=url,
+                    final_url=resp.url,
+                    status=resp.status_code,
+                    text=resp.text,
+                    from_cache=False,
+                    fetched_at=fetched_at,
+                    sha256=digest,
+                )
 
-        raise RuntimeError(f"{url}: giving up after {self.max_retries} attempts ({last_exc})")
+            raise RuntimeError(f"{url}: giving up after {self.max_retries} attempts ({last_exc})")

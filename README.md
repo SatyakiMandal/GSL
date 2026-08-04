@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-258 tests
+270 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -81,7 +81,7 @@ FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
 front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 258 tests, no network required
+pytest -q     # 270 tests, no network required
 ```
 
 ### Run the spike
@@ -163,10 +163,12 @@ python -m ceia.ingest \
   --out out/adani_jan2023.json
 ```
 
-Useful flags: `--limit N` (cap fetches for a trial run), `--skip-sentiment` /
-`--skip-emotion` (skip either model independently — no download), `--min-relevance`
-(default 0.35), `--min-interval` (seconds between requests to one origin,
-default 2), `--sources`.
+Useful flags: `--limit N` (cap fetches for a trial run), `--workers N`
+(concurrent fetches across different sites, default 8 — see
+[Concurrency](#concurrency-faster-not-less-polite)), `--skip-sentiment` /
+`--skip-emotion` (skip either model independently — no download),
+`--min-relevance` (default 0.35), `--min-interval` (seconds between requests
+to one origin, default 2), `--sources`.
 
 Output is JSON: run config, per-source status, counts, and every item with its
 timestamp, trading-day attribution, relevance score, sentiment and event tag.
@@ -281,6 +283,29 @@ are split and averaged by confidence so a reversal late in a story is not lost.
 in page furniture on every article, so a marker only counts as a paywall when the
 body is also too short to analyse. Gated items fall back to headline + snippet,
 which is what the PRD sanctions. Nothing tries to get around a gate.
+
+### Concurrency: faster, not less polite
+
+A full-year run repeatedly took 30-90 minutes, mostly `financial_express` and
+`business_line` fetching one sitemap per day, one request at a time.
+Discovery now runs all four sources concurrently (`discover()`, one worker
+thread per source) and article fetching runs `--workers` candidates at once
+(default 8, `fetch_and_parse()`). Neither makes the crawl faster by hitting
+any single site harder — that would trade the PRD's rate-limit obligation for
+speed, which is not a trade this project makes. `Fetcher` gives every origin
+its own lock: two threads hitting the *same* site are serialised exactly as
+if there were only one thread (still `min_interval` seconds apart, still
+honouring a declared `Crawl-delay`), while requests to *different* sites run
+fully in parallel. What speeds up is wall-clock time — four sources that used
+to run one after another now overlap, and the whole point of interleaving
+candidates across sources before fetching (see above) is that most
+consecutive candidates in that list are already different origins, so a
+worker pool gets real overlap without any single site seeing a faster
+request rate. Verified with dedicated concurrency tests (not just "it ran
+fine once"): same-origin requests never overlap in time under load,
+different-origin requests do, and shared state (`items`/`errors`/`seen`)
+comes out with the identical counts a sequential run would produce, run
+repeatedly to catch intermittent races.
 
 ### Emotion (GoEmotions) — secondary texture, not a second vote
 

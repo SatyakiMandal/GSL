@@ -210,6 +210,11 @@ def main() -> None:
                         help="Cap articles fetched (live scraping only), evenly "
                              "spread across the whole date range rather than "
                              "just its earliest days.")
+    parser.add_argument("--workers", type=int, default=8,
+                        help="Concurrent article fetches, live scraping only "
+                             "(default 8). Requests to any single origin are "
+                             "still serialised at the configured interval "
+                             "regardless of --workers.")
     parser.add_argument("--price-csv", default=None,
                         help="Directory of <SYMBOL>.csv files; forces the CSV provider.")
     parser.add_argument("--api-key", default=None,
@@ -255,7 +260,8 @@ def main() -> None:
         log.info("loaded %d items from %s", len(items), args.news)
     else:
         fetcher = Fetcher(cache_dir=args.cache_dir, user_agent=args.user_agent)
-        ingested: IngestResult = run_ingest(config, fetcher=fetcher, limit=args.limit)
+        ingested: IngestResult = run_ingest(config, fetcher=fetcher, limit=args.limit,
+                                            max_workers=args.workers)
         items, news_meta = ingested.items, ingested.to_dict()
         news_meta.pop("items", None)
 
