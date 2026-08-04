@@ -29,11 +29,13 @@ import json
 import logging
 import sys
 import tempfile
+import threading
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
 # `streamlit run ceia/gui.py` executes this file as a standalone script, not
 # as part of the ceia package, so relative imports fail with "attempted
@@ -66,23 +68,43 @@ st.set_page_config(page_title="Company Event Impact Analyzer", layout="wide")
 
 class _StreamlitLogHandler(logging.Handler):
     """Appends each log record to a placeholder, so a multi-minute scrape
-    shows live progress instead of a spinner with no detail underneath."""
+    shows live progress instead of a spinner with no detail underneath.
 
-    def __init__(self, placeholder) -> None:
+    Discovery and ingestion both run their sources/fetches concurrently
+    (``ThreadPoolExecutor``), so ``emit()`` is called from worker threads
+    Streamlit never spawned itself and that therefore have no
+    ``ScriptRunContext`` attached. A Streamlit call from such a thread is
+    unsafe - confirmed live (not just from the docs): running a real scrape
+    through this exact handler produced an intermittent crash inside
+    Streamlit's own internals, racy enough that most calls only logged a
+    quiet "missing ScriptRunContext, can be ignored" warning and a few
+    actually raised and took the whole run down with them. ``add_script_run_ctx``
+    is Streamlit's documented fix for exactly this - attach the context this
+    handler was created with to whichever thread happens to be calling
+    ``emit()`` right now, main thread or worker. The lock serialises the
+    actual UI write so concurrent callers cannot interleave a torn render.
+    """
+
+    def __init__(self, placeholder, ctx) -> None:
         super().__init__()
         self.placeholder = placeholder
+        self.ctx = ctx
         self.lines: list[str] = []
+        self._lock = threading.Lock()
 
     def emit(self, record: logging.LogRecord) -> None:
-        self.lines.append(self.format(record))
-        # Cap what is rendered; a live scrape can log hundreds of lines and
-        # redrawing all of them every time gets slow well before that.
-        self.placeholder.code("\n".join(self.lines[-60:]))
+        if self.ctx is not None:
+            add_script_run_ctx(threading.current_thread(), self.ctx)
+        with self._lock:
+            self.lines.append(self.format(record))
+            # Cap what is rendered; a live scrape can log hundreds of lines
+            # and redrawing all of them every time gets slow well before that.
+            self.placeholder.code("\n".join(self.lines[-60:]))
 
 
 def _run_with_live_log(fn, *args, **kwargs):
     placeholder = st.empty()
-    handler = _StreamlitLogHandler(placeholder)
+    handler = _StreamlitLogHandler(placeholder, get_script_run_ctx())
     handler.setFormatter(logging.Formatter("%(message)s"))
     logger = logging.getLogger("ceia")
     logger.addHandler(handler)

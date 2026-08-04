@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-330 tests
+333 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -115,7 +115,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
 `pip install`, which is why it's not in `.[all]`).
 
 ```bash
-pytest -q     # 330 tests, no network required
+pytest -q     # 333 tests, no network required
 ```
 
 ### Run the spike
@@ -758,7 +758,25 @@ Price data uses the same provider chain as the CLI (yfinance → Yahoo chart API
 Alpha Vantage key, or two uploaded CSVs (ticker and benchmark) that — if both
 are present — are used directly instead of any network provider. The finished
 run shows headline metrics, the top candidate incident, the full HTML report
-embedded inline, and download buttons for `report.html` and `analysis.json`.
+embedded inline, and download buttons for `report.html`, `analysis.json`, and
+(on request — see [PDF export](#pdf-export)) `report.pdf`.
+
+### A thread-safety bug the live log caught
+
+Discovery and ingestion both fan work out across a `ThreadPoolExecutor` (see
+[Concurrency](#concurrency-faster-not-less-polite)), so the handler streaming
+their progress into the page (`_StreamlitLogHandler`) is called from worker
+threads Streamlit itself never spawned. Those threads have no
+`ScriptRunContext`, and a Streamlit call from one is unsafe — confirmed by
+actually running a live scrape through the GUI (Playwright driving the real
+running app, not just reading the source): most such calls only logged an
+"ignorable" warning, but the race was tight enough that some of them
+genuinely crashed the run from inside Streamlit's own internals, non-
+deterministically. Fixed with `add_script_run_ctx` (Streamlit's documented
+mechanism for exactly this), attaching the context captured on the main
+thread to whichever thread is calling the handler at that moment, plus a lock
+around the actual render so concurrent callers cannot interleave a torn one.
+Regression-tested by hammering the handler from 40 concurrent threads.
 
 ## Reusing the collected corpus
 
