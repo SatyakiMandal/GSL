@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-277 tests
+283 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -113,7 +113,7 @@ FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
 front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 277 tests, no network required
+pytest -q     # 283 tests, no network required
 ```
 
 ### Run the spike
@@ -485,6 +485,34 @@ fitted `alpha`/`beta`/`R²` on success or the exact observation count on
 fallback — the same numbers that were already being computed and thrown into
 `model_note`, just surfaced live instead of only on request.
 
+### Complementary signals: correlation and volume
+
+Two additions read the same daily table from a different angle, both
+deliberately kept **descriptive, not part of incident detection or ranking** —
+neither changes which days get flagged or how they are scored.
+
+* **Sentiment/return correlation** (`ceia/eventstudy.py:sentiment_return_correlation`).
+  A Pearson correlation between each day's weighted sentiment and its abnormal
+  return across the whole analysis window (`numpy.corrcoef`, no new
+  dependency). Requires at least 3 days with both values present after
+  dropping the first trading day's `NaN` return (there is nothing to diff
+  against on day one) and any day with no news. Reported as `r`, `r²`, `n`,
+  and a plain-language note — CLI, HTML report ("Method and provenance"), and
+  GUI all surface it. It is one Pearson coefficient over a handful of days;
+  read as a single extra lens on the daily table, not a significance test.
+* **Trading volume**. Fetched by every price provider already but silently
+  discarded before this — `align_series()` now carries it through when
+  present, and `build_daily_table()` window-relative z-scores it the same way
+  `coverage_z`/`sentiment_z` are computed. Shown as a `volZ` column in the CLI
+  daily table, a `Volume` column in the HTML daily table, and a per-incident
+  "corroborating signal" line in the CLI, HTML incident detail, and GUI top
+  candidate — a volume spike alongside a sentiment/price move is a reason to
+  trust the flag more, but it is not one of the two conditions (unusual
+  coverage + unusual abnormal return) that make a day a candidate in the
+  first place. Confirmed unchanged: the already-validated Adani/Hindenburg
+  ranking (`score` and `abnormal_return_z` on the #1 incident) was
+  byte-identical before and after wiring volume through.
+
 ---
 
 ## Phase 3 — Reporting
@@ -513,7 +541,8 @@ python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
 4. **Ranked incident table** with abnormal return, z, CAR and t.
 5. **Per-incident narrative** — two to four paragraphs each, plus the source
    headlines behind the flag.
-6. **Daily detail table**, flagged rows highlighted.
+6. **Daily detail table**, flagged rows highlighted, with a `Volume` column
+   when the price provider supplied one.
 7. **Method and provenance** — price providers used, model note, timestamp
    alignment, and per-source availability including anything disabled.
 

@@ -72,10 +72,17 @@ def align_series(company: pd.DataFrame, benchmark: pd.DataFrame) -> pd.DataFrame
     cannot yield an abnormal return, and forward-filling an index level would
     invent a 0% market move and push the whole gap into the abnormal term.
     """
-    frame = pd.DataFrame({
+    columns = {
         "close": company["close"],
         "benchmark_close": benchmark["close"],
-    }).dropna()
+    }
+    # yfinance/Yahoo chart both return volume; a bare date,close CSV does not.
+    # Carried through here (previously it was fetched all the way to this
+    # point and then silently dropped - never read by anything downstream)
+    # so it can be shown as a corroborating signal alongside price and news.
+    if "volume" in company.columns:
+        columns["volume"] = company["volume"]
+    frame = pd.DataFrame(columns).dropna(subset=["close", "benchmark_close"])
     frame["return"] = daily_returns(frame["close"])
     frame["benchmark_return"] = daily_returns(frame["benchmark_close"])
     return frame

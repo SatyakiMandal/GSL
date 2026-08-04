@@ -59,6 +59,7 @@ th:first-child,td:first-child{text-align:left}
 td.txt,th.txt{text-align:left;white-space:normal}
 tr.flagged{background:color-mix(in srgb,var(--warn-br) 11%,transparent)}
 .pos{color:var(--pos)}.neg{color:var(--neg)}
+.note{color:var(--muted);font-size:.85rem;font-style:italic}
 .timeline{width:100%;height:auto;display:block}
 .plot-bg{fill:var(--plot)}
 .gridline{stroke:var(--line);stroke-width:1}
@@ -116,9 +117,19 @@ def _stat(key: str, value: str) -> str:
     return f'<div class="stat"><div class="k">{escape(key)}</div><div class="v">{value}</div></div>'
 
 
+def _volume_cell(row: pd.Series) -> str:
+    volume = row.get("volume")
+    if volume is None or pd.isna(volume):
+        return "<td>—</td>"
+    volume_z = row.get("volume_z")
+    z_part = f" (z={float(volume_z):+.1f})" if volume_z is not None and pd.notna(volume_z) else ""
+    return f"<td>{float(volume):,.0f}{z_part}</td>"
+
+
 def _daily_table(daily: pd.DataFrame, incident_days: set[date]) -> str:
     if daily.empty:
         return '<p class="empty">No trading days in the analysis window.</p>'
+    has_volume = "volume" in daily.columns
     rows = []
     for day, row in daily.iterrows():
         # pandas Timestamp subclasses date, so an isinstance guard would leave
@@ -134,15 +145,17 @@ def _daily_table(daily: pd.DataFrame, incident_days: set[date]) -> str:
             f"<td class=\"{_cls(row['benchmark_return'])}\">{_pct(row['benchmark_return'])}</td>"
             f"<td class=\"{_cls(abnormal)}\"><strong>{_pct(abnormal)}</strong></td>"
             f"<td>{float(row['abnormal_return_z']):+.2f}</td>"
-            f"<td>{int(row['unique_count'])}</td>"
+            + (_volume_cell(row) if has_volume else "")
+            + f"<td>{int(row['unique_count'])}</td>"
             f"<td class=\"{_cls(row['weighted_sentiment'])}\">"
             f"{float(row['weighted_sentiment']):+.2f}</td>"
             f"<td class=\"txt\">{escape(str(row['dominant_event'] or '—'))}</td></tr>"
         )
+    volume_header = "<th>Volume</th>" if has_volume else ""
     return (
         '<div class="scroll"><table><thead><tr>'
         "<th>Date</th><th>Close</th><th>Return</th><th>Benchmark</th>"
-        "<th>Abnormal</th><th>z</th><th>Items</th><th>Tone</th>"
+        f"<th>Abnormal</th><th>z</th>{volume_header}<th>Items</th><th>Tone</th>"
         '<th class="txt">Main topic</th></tr></thead><tbody>'
         + "".join(rows) + "</tbody></table></div>"
     )
@@ -199,6 +212,14 @@ def _incident_sections(incidents: list[Incident], company: str, benchmark: str,
             f'<h4 style="margin:16px 0 4px;font-size:.92rem">Coverage behind this flag</h4>'
             f'<ul class="src">{sources}</ul>' if sources else ""
         )
+        volume_note = ""
+        if inc.volume and pd.notna(inc.volume):
+            volume_z_part = (f" (z={inc.volume_z:+.2f})"
+                             if inc.volume_z is not None and pd.notna(inc.volume_z) else "")
+            volume_note = (
+                f'<p class="note">Volume: {inc.volume:,.0f}{volume_z_part} — a '
+                "corroborating signal, not part of the flagging test.</p>"
+            )
         blocks.append(
             f'<div class="incident"><h3><span class="rank">#{rank}</span>'
             f"{inc.day:%d %B %Y}</h3>"
@@ -209,7 +230,7 @@ def _incident_sections(incidents: list[Incident], company: str, benchmark: str,
             + (f'<span class="tag">emotion: {escape(inc.dominant_emotion)}</span>'
                if inc.dominant_emotion else "")
             + "</div>"
-            f"{paragraphs}{source_block}</div>"
+            f"{paragraphs}{volume_note}{source_block}</div>"
         )
     return "".join(blocks)
 

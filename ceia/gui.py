@@ -336,6 +336,13 @@ if submitted:
             f"**{'consistent with' if top.direction_agrees else 'opposite to'}** "
             "the price move."
         )
+        if top.volume and pd.notna(top.volume):
+            volume_z_part = (f" (z = {top.volume_z:+.2f})"
+                             if top.volume_z is not None and pd.notna(top.volume_z) else "")
+            st.caption(
+                f"Volume: {top.volume:,.0f}{volume_z_part} — a corroborating "
+                "signal, not part of the flagging test."
+            )
 
     corr = analysis.correlation
     if corr.get("r") is not None:

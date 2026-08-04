@@ -164,12 +164,14 @@ def _print(analysis: Analysis) -> None:
 
     print(f"\n{'-' * 74}\nDAILY TABLE (abnormal return = company return - expected)\n{'-' * 74}")
     print(f"{'date':<12}{'ret%':>8}{'bench%':>8}{'abn%':>8}{'z':>7}"
-          f"{'news':>6}{'sent':>7}  event")
+          f"{'news':>6}{'sent':>7}{'volZ':>7}  event")
     for day, row in analysis.daily.iterrows():
+        vol_z = row.get("volume_z")
+        vol_display = f"{vol_z:>7.2f}" if pd.notna(vol_z) else f"{'—':>7}"
         print(f"{str(day):<12}{row['return'] * 100:>8.2f}{row['benchmark_return'] * 100:>8.2f}"
               f"{row['abnormal_return'] * 100:>8.2f}{row['abnormal_return_z']:>7.2f}"
               f"{int(row['unique_count']):>6}{row['weighted_sentiment']:>7.2f}"
-              f"  {row['dominant_event']}")
+              f"{vol_display}  {row['dominant_event']}")
 
     print(f"\n{'-' * 74}\nCANDIDATE INCIDENT DAYS (ranked)\n{'-' * 74}")
     if not analysis.incidents:
@@ -182,6 +184,9 @@ def _print(analysis: Analysis) -> None:
         print(f"   abnormal return {incident.abnormal_return * 100:+.2f}% "
               f"(z={incident.abnormal_return_z:+.2f}); raw {incident.raw_return * 100:+.2f}%, "
               f"benchmark {incident.benchmark_return * 100:+.2f}%")
+        if incident.volume_z and pd.notna(incident.volume):
+            print(f"   volume: {incident.volume:,.0f} (z={incident.volume_z:+.2f}) "
+                  "— a corroborating signal, not part of the flagging test")
         print(f"   coverage: {incident.item_count} item(s) (z={incident.coverage_z:+.2f}), "
               f"tone {incident.mean_sentiment:+.2f} - {agree} the price move")
         if car and car.get("days"):

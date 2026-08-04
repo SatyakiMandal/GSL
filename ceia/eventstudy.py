@@ -72,6 +72,8 @@ class Incident:
     mean_sentiment: float
     dominant_event: str
     dominant_emotion: str
+    volume: float
+    volume_z: float
     score: float
     direction_agrees: bool
     car: dict = field(default_factory=dict)
@@ -174,6 +176,7 @@ def build_daily_table(
         rows.append({
             "date": day,
             "close": row["close"],
+            "volume": row.get("volume", float("nan")),
             "return": row["return"],
             "benchmark_return": row["benchmark_return"],
             "expected_return": row.get("expected_return", float("nan")),
@@ -192,10 +195,10 @@ def build_daily_table(
         # stretch). Return an empty frame with the right columns so callers can
         # treat it uniformly instead of special-casing a KeyError.
         empty = pd.DataFrame(columns=[
-            "close", "return", "benchmark_return", "expected_return",
+            "close", "volume", "return", "benchmark_return", "expected_return",
             "abnormal_return", "abnormal_return_z", "item_count", "unique_count",
             "mean_sentiment", "weighted_sentiment", "dominant_event",
-            "dominant_emotion", "sources", "coverage_z", "sentiment_z",
+            "dominant_emotion", "sources", "coverage_z", "sentiment_z", "volume_z",
         ])
         empty.index.name = "date"
         return empty
@@ -213,6 +216,16 @@ def build_daily_table(
     table["sentiment_z"] = [
         _z(v, s_mean, s_sd) if c > 0 else 0.0
         for v, c in zip(table["weighted_sentiment"], table["unique_count"])
+    ]
+    # Window-relative, same style as coverage_z - not a claim about "normal"
+    # volume from before the window, just "unusual for this company in this
+    # run". NaN throughout (no volume from this provider, e.g. a bare CSV) is
+    # not an error; every _z() call on it correctly comes back 0.0.
+    volumes = table["volume"].astype(float)
+    v_mean = float(volumes.mean()) if volumes.notna().any() else 0.0
+    v_sd = float(volumes.std(ddof=1)) if volumes.notna().sum() > 1 else 0.0
+    table["volume_z"] = [
+        _z(v, v_mean, v_sd) if pd.notna(v) else 0.0 for v in volumes
     ]
     return table
 
@@ -276,6 +289,8 @@ def rank_incidents(
             mean_sentiment=float(sentiment),
             dominant_event=str(row["dominant_event"]),
             dominant_emotion=str(row["dominant_emotion"]),
+            volume=float(row["volume"]) if pd.notna(row["volume"]) else float("nan"),
+            volume_z=float(row["volume_z"]),
             score=float(score),
             direction_agrees=agrees,
             car=cumulative_abnormal_return(frame, day, event_window),
