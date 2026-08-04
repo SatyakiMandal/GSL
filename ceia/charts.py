@@ -98,15 +98,33 @@ def _y_axis(y0: float, height: float, low: float, high: float,
 
 
 def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
-                 company: str, benchmark: str) -> str:
+                 company: str, benchmark: str, incidents: list | None = None) -> str:
     """Three stacked panels: rebased prices, abnormal returns, coverage.
 
     Prices are rebased to 100 at the window's first session so a stock priced in
     thousands and an index priced in tens can share an axis and be compared on
     percentage terms, which is what the eye should be reading here.
+
+    ``incidents`` (optional) is the ranked candidate list from
+    ``eventstudy.rank_incidents`` — when supplied, each flagged day gets a
+    numbered badge in the top panel matching its rank in the incident table
+    below, and richer hover text on its abnormal-return bar, so a reader can
+    tell *which* flagged day is which without leaving the chart. Without it
+    (or for a day in ``incident_days`` that isn't in ``incidents``), the day
+    still gets its dashed marker line and outlined bar, just no number.
     """
     if daily.empty:
         return '<p class="empty">No trading days in the analysis window.</p>'
+
+    incident_rank: dict[date, int] = {}
+    incident_tooltip: dict[date, str] = {}
+    for rank, incident in enumerate(incidents or [], 1):
+        incident_rank[incident.day] = rank
+        incident_tooltip[incident.day] = (
+            f"#{rank} {incident.day:%d %b %Y}: abnormal return "
+            f"{incident.abnormal_return * 100:+.2f}%, {incident.item_count} "
+            "news item(s) — see the ranked list below"
+        )
 
     # pandas Timestamp subclasses datetime.date, so an isinstance check would
     # leave Timestamps untouched and they never compare equal to the plain
@@ -127,6 +145,13 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
         f'<svg viewBox="0 0 {WIDTH} {total_h:.0f}" class="timeline" '
         f'preserveAspectRatio="xMidYMid meet" role="img" '
         f'aria-label="Price, abnormal return and coverage timeline">'
+        # Negative-tone coverage bars (panel 3) are otherwise distinguished
+        # from positive ones by colour alone - this hatch overlay gives a
+        # second, colour-independent cue for readers who can't rely on the
+        # red/green difference.
+        '<defs><pattern id="neg-hatch" width="6" height="6" '
+        'patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'
+        '<line x1="0" y1="0" x2="0" y2="6" class="hatch-line"/></pattern></defs>'
     ]
 
     # ---- Panel 1: rebased price vs benchmark -----------------------------
@@ -148,16 +173,41 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
                               f"{company} vs {benchmark} — rebased to 100"))
     parts.append(_y_axis(price_y, price_h, low, high))
 
+    # A reference line at the rebased starting level (100 = "unchanged since
+    # day one"). Without it, "is the stock up or down since the window
+    # started" requires reading the y-axis scale; with it, it is a glance.
+    if low <= 100 <= high:
+        base_y = price_y_of(100.0)
+        parts.append(
+            f'<line x1="{PAD_LEFT}" y1="{base_y:.1f}" x2="{WIDTH - PAD_RIGHT}" '
+            f'y2="{base_y:.1f}" class="baseline"/>'
+            f'<text x="{PAD_LEFT + 4}" y="{base_y - 3:.1f}" class="tick">'
+            "start of window</text>"
+        )
+
     for values, css in ((bench_idx, "line-benchmark"), (company_idx, "line-company")):
         points = " ".join(f"{x:.1f},{price_y_of(v):.1f}" for x, v in zip(xs, values))
         parts.append(f'<polyline points="{points}" class="{css}"/>')
 
+    badge_r = 9.0
+    badge_cy = price_y + 15.0
     for x, day in zip(xs, dates):
-        if day in incident_days:
-            parts.append(
-                f'<line x1="{x:.1f}" y1="{price_y:.1f}" x2="{x:.1f}" '
-                f'y2="{price_y + price_h:.1f}" class="incident-rule"/>'
-            )
+        if day not in incident_days:
+            continue
+        parts.append(
+            f'<line x1="{x:.1f}" y1="{price_y:.1f}" x2="{x:.1f}" '
+            f'y2="{price_y + price_h:.1f}" class="incident-rule"/>'
+        )
+        rank = incident_rank.get(day)
+        if rank is None:
+            continue
+        tooltip = escape(incident_tooltip.get(day, f"{day:%d %b %Y}: flagged incident"))
+        parts.append(
+            f'<g class="incident-badge">'
+            f'<circle cx="{x:.1f}" cy="{badge_cy:.1f}" r="{badge_r}"/>'
+            f'<text x="{x:.1f}" y="{badge_cy + 3.5:.1f}" text-anchor="middle">{rank}</text>'
+            f"<title>{tooltip}</title></g>"
+        )
 
     # The legend sits in the title row rather than inside the plot: a flat
     # benchmark line runs along the top of the panel and an in-plot legend
@@ -184,7 +234,7 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
 
     parts.append(_panel_frame(abn_y, abn_h,
                               "Abnormal return — company move with the market's move removed (%)"))
-    parts.append(_y_axis(abn_y, abn_h, -bound, bound, "{:+.1f}"))
+    parts.append(_y_axis(abn_y, abn_h, -bound, bound, "{:+.1f}%"))
 
     band = (WIDTH - PAD_LEFT - PAD_RIGHT) / n
     bar_w = max(2.0, min(band * 0.62, 26.0))
@@ -194,10 +244,11 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
         top, height = min(y, zero), abs(y - zero)
         css = "bar-neg" if value < 0 else "bar-pos"
         flag = " bar-incident" if day in incident_days else ""
+        tooltip = (incident_tooltip.get(day) or f"{day:%d %b %Y}: {value:+.2f}%")
         parts.append(
             f'<rect x="{x - bar_w / 2:.1f}" y="{top:.1f}" width="{bar_w:.1f}" '
             f'height="{max(height, 0.8):.1f}" class="{css}{flag}">'
-            f'<title>{day:%d %b %Y}: {value:+.2f}%</title></rect>'
+            f"<title>{escape(tooltip)}</title></rect>"
         )
     parts.append(
         f'<line x1="{PAD_LEFT}" y1="{zero:.1f}" x2="{WIDTH - PAD_RIGHT}" '
@@ -219,11 +270,17 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
         height = count / max_count * cov_h
         css = ("tone-neg" if tone <= -0.15 else
                "tone-pos" if tone >= 0.15 else "tone-neutral")
+        bar_y = cov_y + cov_h - height
         parts.append(
-            f'<rect x="{x - bar_w / 2:.1f}" y="{cov_y + cov_h - height:.1f}" '
+            f'<rect x="{x - bar_w / 2:.1f}" y="{bar_y:.1f}" '
             f'width="{bar_w:.1f}" height="{height:.1f}" class="{css}">'
             f'<title>{day:%d %b %Y}: {count} item(s), tone {tone:+.2f}</title></rect>'
         )
+        if css == "tone-neg":
+            parts.append(
+                f'<rect x="{x - bar_w / 2:.1f}" y="{bar_y:.1f}" width="{bar_w:.1f}" '
+                f'height="{height:.1f}" fill="url(#neg-hatch)" pointer-events="none"/>'
+            )
 
     parts.append(
         f'<g transform="translate(0,{cov_y + cov_h + 16:.1f})">'

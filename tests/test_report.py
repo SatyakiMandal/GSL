@@ -234,6 +234,41 @@ class TestCharts:
         frame = make_analysis().daily.iloc[:1]
         assert "<svg" in timeline_svg(frame, set(), "X", "^NSEI")
 
+    def test_incidents_get_a_numbered_badge_and_tooltip(self):
+        incident = make_incident(day=date(2023, 1, 25))
+        svg = timeline_svg(make_analysis().daily, {date(2023, 1, 25)}, "X", "^NSEI",
+                           incidents=[incident])
+        assert "incident-badge" in svg
+        assert ">1<" in svg, "the only incident should be badge #1"
+        assert "#1 25 Jan 2023" in svg
+
+    def test_without_incidents_list_there_are_no_badges(self):
+        """The plain dashed marker line still appears (incident_days alone
+        drives that); only the numbered badge needs the richer incidents list."""
+        svg = timeline_svg(make_analysis().daily, {date(2023, 1, 25)}, "X", "^NSEI")
+        assert "incident-rule" in svg
+        assert "incident-badge" not in svg
+
+    def test_incident_not_in_incidents_list_gets_no_badge(self):
+        """A day flagged in incident_days but absent from incidents (a caller
+        passing mismatched sets) degrades to the plain marker, not a crash."""
+        svg = timeline_svg(make_analysis().daily, {date(2023, 1, 27)}, "X", "^NSEI",
+                           incidents=[make_incident(day=date(2023, 1, 25))])
+        assert "incident-rule" in svg
+        assert "incident-badge" not in svg
+
+    def test_baseline_100_reference_line_present(self):
+        svg = timeline_svg(make_analysis().daily, set(), "X", "^NSEI")
+        assert "baseline" in svg
+        assert "start of window" in svg
+
+    def test_negative_tone_bars_get_a_hatch_overlay(self):
+        """Tone in panel 3 is otherwise colour-only; the hatch is a second,
+        colour-independent cue for negative-tone days (fixture has two:
+        weighted_sentiment -0.22 and -0.39, both <= the -0.15 tone-neg cutoff)."""
+        svg = timeline_svg(make_analysis().daily, set(), "X", "^NSEI")
+        assert svg.count('fill="url(#neg-hatch)"') == 2
+
 
 class TestHtmlReport:
     def test_is_self_contained(self):

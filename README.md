@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-299 tests
+304 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -113,7 +113,7 @@ FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
 front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 299 tests, no network required
+pytest -q     # 304 tests, no network required
 ```
 
 ### Run the spike
@@ -577,8 +577,14 @@ python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
    *and* its limitations, so the caveats come first.
 2. **Summary narrative** — what was examined, which return model was used, and
    what was found, in plain language.
-3. **Timeline** (three stacked panels): company vs benchmark rebased to 100;
-   abnormal return bars; news volume coloured by tone. Flagged days are marked.
+3. **Timeline** (three stacked panels): company vs benchmark rebased to 100,
+   with a dotted "start of window" reference line; abnormal return bars, axis
+   labelled in %; news volume coloured by tone, with a diagonal-hatch overlay
+   on negative-tone bars so the signal isn't colour-only for colourblind
+   readers. Flagged days get a dashed marker line **and** a numbered badge in
+   the top panel matching their rank in the incident table below (badge #1 =
+   the highest-ranked candidate); every bar has a hover tooltip with its exact
+   date and value.
 4. **Ranked incident table** with abnormal return, z, CAR and t.
 5. **Per-incident narrative** — two to four paragraphs each, plus the source
    headlines behind the flag.

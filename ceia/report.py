@@ -70,10 +70,14 @@ tr.flagged{background:color-mix(in srgb,var(--warn-br) 11%,transparent)}
 stroke-linejoin:round;stroke-linecap:round}
 .line-benchmark{fill:none;stroke:var(--bench);stroke-width:1.7;stroke-dasharray:5 3}
 .incident-rule{stroke:var(--warn-br);stroke-width:1.4;stroke-dasharray:3 3;opacity:.85}
+.baseline{stroke:var(--muted);stroke-width:1;stroke-dasharray:2 3;opacity:.55}
+.incident-badge circle{fill:var(--warn-br);stroke:var(--card);stroke-width:1.5}
+.incident-badge text{fill:#fff;font-size:10px;font-weight:700;font-family:inherit}
 .bar-pos{fill:var(--pos)}.bar-neg{fill:var(--neg)}
 .bar-incident{stroke:var(--warn-br);stroke-width:1.4}
 .tone-neg{fill:var(--neg);opacity:.82}.tone-pos{fill:var(--pos);opacity:.82}
 .tone-neutral{fill:var(--muted);opacity:.6}
+.hatch-line{stroke:var(--bg);stroke-width:1.6;opacity:.6}
 .spark{width:110px;height:26px}
 .spark-neg{fill:none;stroke:var(--neg);stroke-width:1.6}
 .spark-pos{fill:none;stroke:var(--pos);stroke-width:1.6}
@@ -383,11 +387,15 @@ Coincidence in time is not evidence that an article caused a price move.</p>
 
 <h2>Timeline</h2>
 <p>The top panel rebases both the company and the benchmark to 100 at the start of
-the window, so they can be compared on percentage terms. The middle panel shows the
-<strong>abnormal return</strong> — the company's move once the market's move that day
-is removed. The bottom panel shows how many distinct news items were attributed to
-each trading day, coloured by tone. Dashed vertical lines mark flagged days.</p>
-{timeline_svg(daily, incident_days, config.company, config.benchmark)}
+the window, so they can be compared on percentage terms; the dotted line marks that
+starting level. The middle panel shows the <strong>abnormal return</strong> — the
+company's move once the market's move that day is removed. The bottom panel shows how
+many distinct news items were attributed to each trading day, coloured by tone (a
+hatched fill marks negative-tone bars as a colour-independent cue). Dashed vertical
+lines and numbered badges mark the ranked candidate incident days below — badge
+<strong>#1</strong> is the highest-ranked candidate, and so on. Hover any bar for its
+exact date and value.</p>
+{timeline_svg(daily, incident_days, config.company, config.benchmark, incidents=incidents)}
 
 <h2>Candidate incident days</h2>
 <p>Ranked by the combination of an unusual abnormal return and notable coverage.
