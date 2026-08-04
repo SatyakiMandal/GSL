@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tata Motors — event impact analysis</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1c1b19;--muted:#6b6862;--line:#e3e1dc;--card:#fff;
+--accent:#1a56a8;--bench:#9a958c;--pos:#1f7a4d;--neg:#b3261e;--warn-bg:#fdf6e3;
+--warn-br:#d9a441;--plot:#f5f4f1;}
+@media (prefers-color-scheme:dark){:root{--bg:#16151a;--fg:#e9e7e2;--muted:#9e9a92;
+--line:#33313a;--card:#1e1d23;--accent:#7fb0f0;--bench:#7d7970;--pos:#5cc48d;
+--neg:#f2837a;--warn-bg:#2b2416;--warn-br:#a8802f;--plot:#212027;}}
+*{box-sizing:border-box}
+body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+.wrap{max-width:1000px;margin:0 auto;padding:40px 22px 80px}
+h1{font-size:1.9rem;line-height:1.25;margin:0 0 6px}
+h2{font-size:1.3rem;margin:44px 0 14px;padding-bottom:7px;border-bottom:2px solid var(--line)}
+h3{font-size:1.05rem;margin:26px 0 8px}
+p{margin:0 0 13px}
+.sub{color:var(--muted);font-size:.95rem;margin-bottom:26px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:9px;
+padding:18px 20px;margin:16px 0}
+.warn{background:var(--warn-bg);border-left:4px solid var(--warn-br);
+border-radius:0 7px 7px 0;padding:15px 19px;margin:18px 0}
+.warn h3{margin-top:0}
+.warn ul{margin:8px 0 0;padding-left:20px}
+.warn li{margin-bottom:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;margin:16px 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.stat .k{color:var(--muted);font-size:.76rem;text-transform:uppercase;letter-spacing:.05em}
+.stat .v{font-size:1.28rem;font-weight:600;margin-top:3px;font-variant-numeric:tabular-nums}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:640px}
+th,td{padding:8px 11px;text-align:right;border-bottom:1px solid var(--line);
+white-space:nowrap;font-variant-numeric:tabular-nums}
+th{font-weight:600;color:var(--muted);font-size:.78rem;text-transform:uppercase;
+letter-spacing:.04em;text-align:right}
+th:first-child,td:first-child{text-align:left}
+td.txt,th.txt{text-align:left;white-space:normal}
+tr.flagged{background:color-mix(in srgb,var(--warn-br) 11%,transparent)}
+.pos{color:var(--pos)}.neg{color:var(--neg)}
+.timeline{width:100%;height:auto;display:block}
+.plot-bg{fill:var(--plot)}
+.gridline{stroke:var(--line);stroke-width:1}
+.axis-zero{stroke:var(--muted);stroke-width:1.2}
+.tick{fill:var(--muted);font-size:11px}
+.panel-title{fill:var(--fg);font-size:12.5px;font-weight:600}
+.line-company{fill:none;stroke:var(--accent);stroke-width:2.1;
+stroke-linejoin:round;stroke-linecap:round}
+.line-benchmark{fill:none;stroke:var(--bench);stroke-width:1.7;stroke-dasharray:5 3}
+.incident-rule{stroke:var(--warn-br);stroke-width:1.4;stroke-dasharray:3 3;opacity:.85}
+.bar-pos{fill:var(--pos)}.bar-neg{fill:var(--neg)}
+.bar-incident{stroke:var(--warn-br);stroke-width:1.4}
+.tone-neg{fill:var(--neg);opacity:.82}.tone-pos{fill:var(--pos);opacity:.82}
+.tone-neutral{fill:var(--muted);opacity:.6}
+.spark{width:110px;height:26px}
+.spark-neg{fill:none;stroke:var(--neg);stroke-width:1.6}
+.spark-pos{fill:none;stroke:var(--pos);stroke-width:1.6}
+.incident{border:1px solid var(--line);border-left:4px solid var(--warn-br);
+border-radius:0 9px 9px 0;padding:18px 22px;margin:20px 0;background:var(--card)}
+.rank{display:inline-block;background:var(--warn-br);color:#fff;border-radius:5px;
+padding:1px 9px;font-size:.82rem;font-weight:700;margin-right:9px}
+.src{list-style:none;padding:0;margin:12px 0 0}
+.src li{padding:7px 0;border-top:1px solid var(--line);font-size:.9rem}
+.tag{display:inline-block;font-size:.72rem;padding:1px 7px;border-radius:4px;
+background:var(--plot);color:var(--muted);margin-right:7px;border:1px solid var(--line)}
+.foot{color:var(--muted);font-size:.85rem;margin-top:52px;padding-top:16px;
+border-top:1px solid var(--line)}
+code{background:var(--plot);padding:1px 5px;border-radius:4px;font-size:.87em}
+.empty{color:var(--muted);font-style:italic}
+</style></head><body><div class="wrap">
+
+<h1>Tata Motors — news and price impact</h1>
+<div class="sub">TMCV.NS vs ^NSEI &middot;
+01 January 2025 to 01 January 2026 &middot; generated 04 August 2026 at 01:08</div>
+
+<div class="warn">
+<h3>What this report is, and is not</h3>
+<p>This is a <strong>structured case study</strong>, not a statistically validated
+causal finding, and not investment advice. It identifies days where notable news
+coverage <strong>coincided with</strong> an unusual company-specific price move.
+Coincidence in time is not evidence that an article caused a price move.</p>
+<ul><li>This is a structured case study, not a statistically validated causal finding. One company over one date range yields too few distinct incidents for the sentiment/abnormal-return relationship to carry statistical significance; a proper event study spans dozens of companies and events.</li><li>Flagged days are days on which unusual coverage COINCIDED WITH an unusual benchmark-adjusted return. Coincidence in time is not evidence that an article caused a price move.</li><li>Only 3 trading day(s) in this window carried coverage — too few to say which days were unusually busy, so the coverage test was RELAXED to &#x27;any coverage at all&#x27; and days were flagged on the abnormal return alone. Treat the ranking as &#x27;notable price moves that had coverage&#x27;, not as evidence that the coverage was itself unusual. Widen the date range to restore the stricter test.</li><li>Abnormal returns use the market-adjusted model (beta fixed at 1.0) because there was not enough clean lead-in data to fit a market model. A high-beta stock will show a systematically inflated abnormal return under this assumption.</li><li>Abnormal returns are standardised against the analysis window&#x27;s own spread rather than a clean estimation window, which understates how unusual the largest moves are.</li><li>0 candidate incident(s) were flagged. Rankings over so few candidates are indicative only.</li></ul>
+</div>
+
+<h2>Summary</h2>
+<p>This report examines Tata Motors (TMCV.NS) between 01 January 2025 and 01 January 2026, covering 36 trading days. It collects what the Indian financial press published about the company over that period, measures how the stock moved relative to ^NSEI, and identifies days where notable coverage and an unusual company-specific price move happened to fall together.</p><p>Price moves are reported as <em>abnormal returns</em>: the company's actual return minus the benchmark's return that day. There was not enough price history before this window to fit a full market model, so the stock is assumed to move one-for-one with the index. For a stock that is more volatile than the market, this assumption will overstate the abnormal return.</p><p>Across 3 collected items of coverage, <strong>no day met both tests</strong> — that is, no day combined notable coverage with an unusually large company-specific price move at the configured thresholds. That is a legitimate result: it suggests the period contained no single dominant, market-moving story about this company. It can also mean the thresholds are set too strictly, or the window is too short for the coverage baseline to mean much.</p>
+<div class="grid"><div class="stat"><div class="k">Trading days</div><div class="v">36</div></div><div class="stat"><div class="k">News items</div><div class="v">3</div></div><div class="stat"><div class="k">Candidate days</div><div class="v">0</div></div><div class="stat"><div class="k">Return model</div><div class="v">market-adjusted</div></div><div class="stat"><div class="k">Beta</div><div class="v">1.00</div></div><div class="stat"><div class="k">Published after close</div><div class="v">1</div></div></div>
+
+<h2>Timeline</h2>
+<p>The top panel rebases both the company and the benchmark to 100 at the start of
+the window, so they can be compared on percentage terms. The middle panel shows the
+<strong>abnormal return</strong> — the company's move once the market's move that day
+is removed. The bottom panel shows how many distinct news items were attributed to
+each trading day, coloured by tone. Dashed vertical lines mark flagged days.</p>
+<svg viewBox="0 0 960 596" class="timeline" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Price, abnormal return and coverage timeline"><text x="62" y="18.0" class="panel-title">Tata Motors vs ^NSEI — rebased to 100</text><rect x="62" y="26.0" width="880" height="190.0" class="plot-bg"/><line x1="62" y1="185.3" x2="942" y2="185.3" class="gridline"/><text x="54" y="188.8" class="tick" text-anchor="end">100</text><line x1="62" y1="136.3" x2="942" y2="136.3" class="gridline"/><text x="54" y="139.8" class="tick" text-anchor="end">110</text><line x1="62" y1="87.3" x2="942" y2="87.3" class="gridline"/><text x="54" y="90.8" class="tick" text-anchor="end">120</text><line x1="62" y1="38.3" x2="942" y2="38.3" class="gridline"/><text x="54" y="41.8" class="tick" text-anchor="end">130</text><polyline points="74.2,185.3 98.7,185.2 123.1,184.6 147.6,182.7 172.0,184.6 196.4,181.9 220.9,179.3 245.3,181.6 269.8,183.7 294.2,185.1 318.7,179.0 343.1,178.8 367.6,179.1 392.0,179.6 416.4,182.3 440.9,183.2 465.3,182.3 489.8,179.4 514.2,183.7 538.7,186.0 563.1,187.5 587.6,184.8 612.0,182.0 636.4,182.4 660.9,185.6 685.3,186.4 709.8,186.4 734.2,183.6 758.7,179.7 783.1,179.6 807.6,180.2 832.0,182.1 856.4,184.0 880.9,184.1 905.3,180.5 929.8,180.1" class="line-benchmark"/><polyline points="74.2,185.3 98.7,198.2 123.1,202.9 147.6,195.5 172.0,191.7 196.4,191.4 220.9,195.1 245.3,193.2 269.8,198.4 294.2,202.5 318.7,193.3 343.1,163.8 367.6,151.7 392.0,141.3 416.4,147.6 440.9,139.3 465.3,145.1 489.8,140.5 514.2,139.3 538.7,120.4 563.1,113.4 587.6,120.8 612.0,119.8 636.4,113.2 660.9,99.2 685.3,99.8 709.8,78.8 734.2,88.8 758.7,63.0 783.1,41.6 807.6,67.4 832.0,67.5 856.4,66.2 880.9,66.0 905.3,57.3 929.8,39.1" class="line-company"/><g class="legend" transform="translate(724,14)"><line x1="0" y1="0" x2="22" y2="0" class="line-company"/><text x="28" y="4" class="tick">Tata Motors</text><line x1="108" y1="0" x2="130" y2="0" class="line-benchmark"/><text x="136" y="4" class="tick">^NSEI</text></g><text x="62" y="254.0" class="panel-title">Abnormal return — company move with the market&#x27;s move removed (%)</text><rect x="62" y="262.0" width="880" height="130.0" class="plot-bg"/><line x1="62" y1="371.5" x2="942" y2="371.5" class="gridline"/><text x="54" y="375.0" class="tick" text-anchor="end">-5.0</text><line x1="62" y1="327.0" x2="942" y2="327.0" class="gridline"/><text x="54" y="330.5" class="tick" text-anchor="end">+0.0</text><line x1="62" y1="282.5" x2="942" y2="282.5" class="gridline"/><text x="54" y="286.0" class="tick" text-anchor="end">+5.0</text><rect x="66.6" y="327.0" width="15.2" height="0.8" class="bar-pos"><title>12 Nov 2025: +0.00%</title></rect><rect x="91.1" y="327.0" width="15.2" height="23.6" class="bar-neg"><title>13 Nov 2025: -2.65%</title></rect><rect x="115.5" y="327.0" width="15.2" height="9.8" class="bar-neg"><title>14 Nov 2025: -1.10%</title></rect><rect x="140.0" y="316.5" width="15.2" height="10.5" class="bar-pos"><title>17 Nov 2025: +1.18%</title></rect><rect x="164.4" y="316.4" width="15.2" height="10.6" class="bar-pos"><title>18 Nov 2025: +1.19%</title></rect><rect x="188.9" y="327.0" width="15.2" height="4.5" class="bar-neg"><title>19 Nov 2025: -0.50%</title></rect><rect x="213.3" y="327.0" width="15.2" height="11.5" class="bar-neg"><title>20 Nov 2025: -1.29%</title></rect><rect x="237.8" y="319.3" width="15.2" height="7.7" class="bar-pos"><title>21 Nov 2025: +0.86%</title></rect><rect x="262.2" y="327.0" width="15.2" height="5.9" class="bar-neg"><title>24 Nov 2025: -0.66%</title></rect><rect x="286.6" y="327.0" width="15.2" height="5.1" class="bar-neg"><title>25 Nov 2025: -0.57%</title></rect><rect x="311.1" y="320.7" width="15.2" height="6.3" class="bar-pos"><title>26 Nov 2025: +0.71%</title></rect><rect x="335.5" y="272.8" width="15.2" height="54.2" class="bar-pos"><title>27 Nov 2025: +6.09%</title></rect><rect x="360.0" y="305.6" width="15.2" height="21.4" class="bar-pos"><title>28 Nov 2025: +2.40%</title></rect><rect x="384.4" y="308.3" width="15.2" height="18.7" class="bar-pos"><title>01 Dec 2025: +2.11%</title></rect><rect x="408.9" y="327.0" width="15.2" height="5.7" class="bar-neg"><title>02 Dec 2025: -0.64%</title></rect><rect x="433.3" y="311.4" width="15.2" height="15.6" class="bar-pos"><title>03 Dec 2025: +1.76%</title></rect><rect x="457.8" y="327.0" width="15.2" height="11.4" class="bar-neg"><title>04 Dec 2025: -1.28%</title></rect><rect x="482.2" y="324.5" width="15.2" height="2.5" class="bar-pos"><title>05 Dec 2025: +0.28%</title></rect><rect x="506.6" y="317.3" width="15.2" height="9.7" class="bar-pos"><title>08 Dec 2025: +1.09%</title></rect><rect x="531.1" y="291.4" width="15.2" height="35.6" class="bar-pos"><title>09 Dec 2025: +4.00%</title></rect><rect x="555.5" y="313.0" width="15.2" height="14.0" class="bar-pos"><title>10 Dec 2025: +1.58%</title></rect><rect x="580.0" y="327.0" width="15.2" height="16.6" class="bar-neg"><title>11 Dec 2025: -1.87%</title></rect><rect x="604.4" y="327.0" width="15.2" height="3.5" class="bar-neg"><title>12 Dec 2025: -0.40%</title></rect><rect x="628.9" y="315.6" width="15.2" height="11.4" class="bar-pos"><title>15 Dec 2025: +1.28%</title></rect><rect x="653.3" y="299.1" width="15.2" height="27.9" class="bar-pos"><title>16 Dec 2025: +3.13%</title></rect><rect x="677.8" y="326.6" width="15.2" height="0.8" class="bar-pos"><title>17 Dec 2025: +0.04%</title></rect><rect x="702.2" y="294.3" width="15.2" height="32.7" class="bar-pos"><title>18 Dec 2025: +3.67%</title></rect><rect x="726.6" y="327.0" width="15.2" height="20.1" class="bar-neg"><title>19 Dec 2025: -2.25%</title></rect><rect x="751.1" y="294.9" width="15.2" height="32.1" class="bar-pos"><title>22 Dec 2025: +3.61%</title></rect><rect x="775.5" y="296.0" width="15.2" height="31.0" class="bar-pos"><title>23 Dec 2025: +3.48%</title></rect><rect x="800.0" y="327.0" width="15.2" height="35.0" class="bar-neg"><title>24 Dec 2025: -3.94%</title></rect><rect x="824.4" y="323.8" width="15.2" height="3.2" class="bar-pos"><title>26 Dec 2025: +0.36%</title></rect><rect x="848.9" y="321.7" width="15.2" height="5.3" class="bar-pos"><title>29 Dec 2025: +0.59%</title></rect><rect x="873.3" y="326.6" width="15.2" height="0.8" class="bar-pos"><title>30 Dec 2025: +0.05%</title></rect><rect x="897.8" y="320.8" width="15.2" height="6.2" class="bar-pos"><title>31 Dec 2025: +0.69%</title></rect><rect x="922.2" y="301.3" width="15.2" height="25.7" class="bar-pos"><title>01 Jan 2026: +2.88%</title></rect><line x1="62" y1="327.0" x2="942" y2="327.0" class="axis-zero"/><text x="62" y="430.0" class="panel-title">News volume (bar height) and tone (colour)</text><rect x="62" y="438.0" width="880" height="110.0" class="plot-bg"/><line x1="62" y1="548.0" x2="942" y2="548.0" class="gridline"/><text x="54" y="551.5" class="tick" text-anchor="end">0</text><line x1="62" y1="520.5" x2="942" y2="520.5" class="gridline"/><text x="54" y="524.0" class="tick" text-anchor="end">0</text><line x1="62" y1="493.0" x2="942" y2="493.0" class="gridline"/><text x="54" y="496.5" class="tick" text-anchor="end">0</text><line x1="62" y1="465.5" x2="942" y2="465.5" class="gridline"/><text x="54" y="469.0" class="tick" text-anchor="end">1</text><line x1="62" y1="438.0" x2="942" y2="438.0" class="gridline"/><text x="54" y="441.5" class="tick" text-anchor="end">1</text><rect x="66.6" y="438.0" width="15.2" height="110.0" class="tone-neutral"><title>12 Nov 2025: 1 item(s), tone +0.03</title></rect><rect x="115.5" y="438.0" width="15.2" height="110.0" class="tone-pos"><title>14 Nov 2025: 1 item(s), tone +0.52</title></rect><rect x="311.1" y="438.0" width="15.2" height="110.0" class="tone-pos"><title>26 Nov 2025: 1 item(s), tone +0.40</title></rect><g transform="translate(0,564.0)"><text x="74.2" y="0" class="tick" text-anchor="middle" transform="rotate(-38 74.2 0)">12 Nov</text><text x="172.0" y="0" class="tick" text-anchor="middle" transform="rotate(-38 172.0 0)">18 Nov</text><text x="269.8" y="0" class="tick" text-anchor="middle" transform="rotate(-38 269.8 0)">24 Nov</text><text x="367.6" y="0" class="tick" text-anchor="middle" transform="rotate(-38 367.6 0)">28 Nov</text><text x="465.3" y="0" class="tick" text-anchor="middle" transform="rotate(-38 465.3 0)">04 Dec</text><text x="563.1" y="0" class="tick" text-anchor="middle" transform="rotate(-38 563.1 0)">10 Dec</text><text x="660.9" y="0" class="tick" text-anchor="middle" transform="rotate(-38 660.9 0)">16 Dec</text><text x="758.7" y="0" class="tick" text-anchor="middle" transform="rotate(-38 758.7 0)">22 Dec</text><text x="856.4" y="0" class="tick" text-anchor="middle" transform="rotate(-38 856.4 0)">29 Dec</text><text x="929.8" y="0" class="tick" text-anchor="middle" transform="rotate(-38 929.8 0)">01 Jan</text></g></svg>
+
+<h2>Candidate incident days</h2>
+<p>Ranked by the combination of an unusual abnormal return and notable coverage.
+The ranking orders days for attention; it is not a significance test.
+<em>*Emotion</em> is a secondary, general-purpose signal (GoEmotions) read
+alongside tone, not a substitute for it — see Method and provenance below.</p>
+<p class="empty">No day combined notable coverage with an unusual abnormal return at the configured thresholds.</p>
+
+
+<h2>Daily detail</h2>
+<p>Every trading day in the window. Highlighted rows are flagged days.</p>
+<div class="scroll"><table><thead><tr><th>Date</th><th>Close</th><th>Return</th><th>Benchmark</th><th>Abnormal</th><th>z</th><th>Items</th><th>Tone</th><th class="txt">Main topic</th></tr></thead><tbody><tr><td>12 Nov 2025</td><td>329.45</td><td class="">—</td><td class="">—</td><td class=""><strong>—</strong></td><td>+nan</td><td>1</td><td class="pos">+0.03</td><td class="txt">other</td></tr><tr><td>13 Nov 2025</td><td>320.75</td><td class="neg">-2.64%</td><td class="pos">+0.01%</td><td class="neg"><strong>-2.65%</strong></td><td>-1.33</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>14 Nov 2025</td><td>317.60</td><td class="neg">-0.98%</td><td class="pos">+0.12%</td><td class="neg"><strong>-1.10%</strong></td><td>-0.55</td><td>1</td><td class="pos">+0.52</td><td class="txt">earnings</td></tr><tr><td>17 Nov 2025</td><td>322.60</td><td class="pos">+1.57%</td><td class="pos">+0.40%</td><td class="pos"><strong>+1.18%</strong></td><td>+0.59</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>18 Nov 2025</td><td>325.15</td><td class="pos">+0.79%</td><td class="neg">-0.40%</td><td class="pos"><strong>+1.19%</strong></td><td>+0.60</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>19 Nov 2025</td><td>325.30</td><td class="pos">+0.05%</td><td class="pos">+0.55%</td><td class="neg"><strong>-0.50%</strong></td><td>-0.25</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>20 Nov 2025</td><td>322.85</td><td class="neg">-0.75%</td><td class="pos">+0.54%</td><td class="neg"><strong>-1.29%</strong></td><td>-0.65</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>21 Nov 2025</td><td>324.10</td><td class="pos">+0.39%</td><td class="neg">-0.47%</td><td class="pos"><strong>+0.86%</strong></td><td>+0.43</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>24 Nov 2025</td><td>320.60</td><td class="neg">-1.08%</td><td class="neg">-0.42%</td><td class="neg"><strong>-0.66%</strong></td><td>-0.33</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>25 Nov 2025</td><td>317.85</td><td class="neg">-0.86%</td><td class="neg">-0.29%</td><td class="neg"><strong>-0.57%</strong></td><td>-0.29</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>26 Nov 2025</td><td>324.05</td><td class="pos">+1.95%</td><td class="pos">+1.24%</td><td class="pos"><strong>+0.71%</strong></td><td>+0.36</td><td>1</td><td class="pos">+0.40</td><td class="txt">earnings</td></tr><tr><td>27 Nov 2025</td><td>343.90</td><td class="pos">+6.13%</td><td class="pos">+0.04%</td><td class="pos"><strong>+6.09%</strong></td><td>+3.06</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>28 Nov 2025</td><td>352.00</td><td class="pos">+2.36%</td><td class="neg">-0.05%</td><td class="pos"><strong>+2.40%</strong></td><td>+1.21</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>01 Dec 2025</td><td>359.05</td><td class="pos">+2.00%</td><td class="neg">-0.10%</td><td class="pos"><strong>+2.11%</strong></td><td>+1.06</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>02 Dec 2025</td><td>354.80</td><td class="neg">-1.18%</td><td class="neg">-0.55%</td><td class="neg"><strong>-0.64%</strong></td><td>-0.32</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>03 Dec 2025</td><td>360.40</td><td class="pos">+1.58%</td><td class="neg">-0.18%</td><td class="pos"><strong>+1.76%</strong></td><td>+0.88</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>04 Dec 2025</td><td>356.45</td><td class="neg">-1.10%</td><td class="pos">+0.18%</td><td class="neg"><strong>-1.28%</strong></td><td>-0.64</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>05 Dec 2025</td><td>359.55</td><td class="pos">+0.87%</td><td class="pos">+0.59%</td><td class="pos"><strong>+0.28%</strong></td><td>+0.14</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>08 Dec 2025</td><td>360.35</td><td class="pos">+0.22%</td><td class="neg">-0.86%</td><td class="pos"><strong>+1.09%</strong></td><td>+0.55</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>09 Dec 2025</td><td>373.10</td><td class="pos">+3.54%</td><td class="neg">-0.47%</td><td class="pos"><strong>+4.00%</strong></td><td>+2.01</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>10 Dec 2025</td><td>377.80</td><td class="pos">+1.26%</td><td class="neg">-0.32%</td><td class="pos"><strong>+1.58%</strong></td><td>+0.79</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>11 Dec 2025</td><td>372.80</td><td class="neg">-1.32%</td><td class="pos">+0.55%</td><td class="neg"><strong>-1.87%</strong></td><td>-0.94</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>12 Dec 2025</td><td>373.45</td><td class="pos">+0.17%</td><td class="pos">+0.57%</td><td class="neg"><strong>-0.40%</strong></td><td>-0.20</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>15 Dec 2025</td><td>377.95</td><td class="pos">+1.20%</td><td class="neg">-0.08%</td><td class="pos"><strong>+1.28%</strong></td><td>+0.64</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>16 Dec 2025</td><td>387.35</td><td class="pos">+2.49%</td><td class="neg">-0.64%</td><td class="pos"><strong>+3.13%</strong></td><td>+1.57</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>17 Dec 2025</td><td>386.90</td><td class="neg">-0.12%</td><td class="neg">-0.16%</td><td class="pos"><strong>+0.04%</strong></td><td>+0.02</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>18 Dec 2025</td><td>401.05</td><td class="pos">+3.66%</td><td class="neg">-0.01%</td><td class="pos"><strong>+3.67%</strong></td><td>+1.84</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>19 Dec 2025</td><td>394.35</td><td class="neg">-1.67%</td><td class="pos">+0.58%</td><td class="neg"><strong>-2.25%</strong></td><td>-1.13</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>22 Dec 2025</td><td>411.70</td><td class="pos">+4.40%</td><td class="pos">+0.79%</td><td class="pos"><strong>+3.61%</strong></td><td>+1.81</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>23 Dec 2025</td><td>426.10</td><td class="pos">+3.50%</td><td class="pos">+0.02%</td><td class="pos"><strong>+3.48%</strong></td><td>+1.75</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>24 Dec 2025</td><td>408.75</td><td class="neg">-4.07%</td><td class="neg">-0.13%</td><td class="neg"><strong>-3.94%</strong></td><td>-1.98</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>26 Dec 2025</td><td>408.65</td><td class="neg">-0.02%</td><td class="neg">-0.38%</td><td class="pos"><strong>+0.36%</strong></td><td>+0.18</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>29 Dec 2025</td><td>409.50</td><td class="pos">+0.21%</td><td class="neg">-0.38%</td><td class="pos"><strong>+0.59%</strong></td><td>+0.30</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>30 Dec 2025</td><td>409.65</td><td class="pos">+0.04%</td><td class="neg">-0.01%</td><td class="pos"><strong>+0.05%</strong></td><td>+0.02</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>31 Dec 2025</td><td>415.50</td><td class="pos">+1.43%</td><td class="pos">+0.74%</td><td class="pos"><strong>+0.69%</strong></td><td>+0.35</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr><tr><td>01 Jan 2026</td><td>427.75</td><td class="pos">+2.95%</td><td class="pos">+0.06%</td><td class="pos"><strong>+2.88%</strong></td><td>+1.45</td><td>0</td><td class="">+0.00</td><td class="txt">—</td></tr></tbody></table></div>
+
+
+
+<h2>Method and provenance</h2>
+<div class="card">
+<p><strong>Abnormal return.</strong> only 0 estimation observations before 2025-01-01 (need 40); using market-adjusted returns with beta fixed at 1.0.
+Prices came from <code>yfinance</code>
+(company) and <code>yfinance</code>
+(benchmark). Abnormal returns are standardised against the
+analysis-window SD (weaker: inflated by the events in it).</p>
+<p><strong>Timestamp alignment.</strong> An item published after the 15:30 IST close is
+attributed to the <em>next</em> trading day, since it could not have moved that day's
+close. 1 of the collected items fell after the close.</p>
+<p><strong>Sentiment.</strong> Scored with FinBERT, a finance-tuned model, rather than a
+general-purpose sentiment library — ordinary financial phrasing such as "beat
+expectations but missed guidance" is read incorrectly by generic tools. This
+score is what drives incident detection and the abnormal-return-direction
+check above.</p>
+<p><strong>Emotion.</strong> A secondary tag from GoEmotions (Demszky et al.,
+2020), a 27-emotion model trained on Reddit comments — <strong>not</strong> a
+finance-tuned model, and reading formal financial-press prose is a genuine
+domain mismatch. It is included as texture (fear vs. anger vs. disapproval
+alongside a shared "negative" FinBERT score can distinguish, say, a regulatory
+probe from a hostile FPO withdrawal) and never affects relevance, incident
+flagging, or the direction check. Scored on the headline only, and left blank
+below a 30% confidence threshold rather than forced to a low-confidence guess.</p>
+</div>
+
+<h3>Source availability</h3>
+<div class="scroll"><table><thead><tr><th>Source</th><th class="txt">Status this run</th></tr></thead><tbody><tr><td>economic_times</td><td class="txt">ok: 198080 candidate URLs</td></tr><tr><td>financial_express</td><td class="txt">ok: 54724 candidate URLs</td></tr><tr><td>business_line</td><td class="txt">ok: 42770 candidate URLs</td></tr><tr><td>moneycontrol</td><td class="txt">ok: 147061 candidate URLs</td></tr><tr><td>business_standard</td><td class="txt">DISABLED — Akamai edge returns 403 for all requests, including robots.txt; permission to crawl cannot be established.</td></tr></tbody></table></div>
+
+<div class="foot">
+Generated by the Company Event Impact Analyzer. Descriptive research only —
+not investment advice, and not a claim of causation.
+</div>
+
+</div></body></html>
