@@ -71,34 +71,61 @@ class IngestResult:
         }
 
 
-def _slug_tokens(aliases: list[str], ticker: str | None) -> set[str]:
-    """Tokens worth looking for in a URL slug."""
-    tokens: set[str] = set()
+def _slug_token_groups(aliases: list[str], ticker: str | None) -> list[frozenset[str]]:
+    """Slug-matching groups: a candidate matches a group if enough of its
+    words are present in the URL slug.
+
+    One group per alias/ticker, not one flat bag of independently-OR-matched
+    words. The flat-bag version matched a candidate on *any* single word from
+    *any* alias, so a company whose name shares a first word with conglomerate
+    siblings - "Tata" (Motors/Steel/Power/Consumer/...), "Adani"
+    (Enterprises/Green/Ports/...), "Reliance", "Bajaj" - had every sibling
+    company's articles pass the filter too. Verified on a real probe: for
+    "Tata Consumer Products", 58 of 99 one-month prefilter matches from a
+    single source turned out to be Tata Steel, Tata Motors, TCS and other
+    unrelated Tata Group companies, none of which mention "consumer" or
+    "products" anywhere - they only matched because "tata" alone was a valid
+    token. That wastes most of a capped fetch budget on the wrong company
+    before relevance scoring ever sees the candidates.
+
+    A multi-word alias now requires at least two of its words to co-occur in
+    the slug (not all of them - real slugs often drop a word, e.g. "products"
+    from "tata-consumer-share-price"), which still rules out a bare "tata"
+    while staying tolerant of which two words a headline happened to keep.
+    Single-word aliases and the ticker symbol are unaffected: one match still
+    suffices, same as before.
+    """
+    groups: list[frozenset[str]] = []
     for alias in aliases:
-        for word in re.findall(r"[a-z0-9]+", alias.lower()):
-            if len(word) > 2 and word not in {"ltd", "limited", "inc", "the", "and"}:
-                tokens.add(word)
+        words = {w for w in re.findall(r"[a-z0-9]+", alias.lower())
+                if len(w) > 2 and w not in {"ltd", "limited", "inc", "the", "and"}}
+        if words:
+            groups.append(frozenset(words))
     if ticker:
         symbol = ticker.split(".")[0].lower()
         if len(symbol) > 2:
-            tokens.add(symbol)
-    return tokens
+            groups.append(frozenset({symbol}))
+    return groups
 
 
-def prefilter(candidates: list[Candidate], tokens: set[str]) -> list[Candidate]:
-    """Keep candidates whose URL slug contains any alias token.
+def prefilter(candidates: list[Candidate], token_groups: list[frozenset[str]]) -> list[Candidate]:
+    """Keep candidates whose URL slug clears at least one alias group's
+    match threshold (see :func:`_slug_token_groups`).
 
     This trades a little recall for a large reduction in fetches. A story about
     the company whose slug never names it will be missed; that is an accepted
     and disclosed cost, recorded in the run stats as the pre-filter ratio.
     """
-    if not tokens:
+    if not token_groups:
         return candidates
     kept = []
     for candidate in candidates:
         slug = candidate.url.lower()
-        if any(token in slug for token in tokens):
-            kept.append(candidate)
+        for group in token_groups:
+            threshold = min(2, len(group))
+            if sum(1 for token in group if token in slug) >= threshold:
+                kept.append(candidate)
+                break
     return kept
 
 
@@ -221,9 +248,10 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
     result.source_status = status
     log.info("discovered %d candidate URLs", len(candidates))
 
-    tokens = _slug_tokens(config.all_aliases, config.ticker)
-    narrowed = interleave(prefilter(candidates, tokens))
-    log.info("pre-filtered to %d URLs on slug tokens %s", len(narrowed), sorted(tokens))
+    token_groups = _slug_token_groups(config.all_aliases, config.ticker)
+    narrowed = interleave(prefilter(candidates, token_groups))
+    log.info("pre-filtered to %d URLs on slug groups %s", len(narrowed),
+             [sorted(g) for g in token_groups])
 
     if limit is not None and len(narrowed) > limit:
         narrowed = cap_across_range(narrowed, limit)

@@ -15,28 +15,73 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ceia.discovery import Candidate  # noqa: E402
 from ceia.extract import IST, clean_headline, json_ld_articles, parse_article  # noqa: E402
-from ceia.ingest import _slug_tokens, cap_across_range, in_range, interleave, prefilter  # noqa: E402
+from ceia.ingest import _slug_token_groups, cap_across_range, in_range, interleave, prefilter  # noqa: E402
 from ceia.models import NewsItem  # noqa: E402
 
 
-class TestSlugPrefilter:
-    def test_tokens_drop_corporate_suffixes(self):
-        tokens = _slug_tokens(["Adani Enterprises Ltd"], "ADANIENT.NS")
-        assert "adani" in tokens and "enterprises" in tokens
-        assert "ltd" not in tokens
-        assert "adanient" in tokens
+class TestSlugTokenGroups:
+    def test_drops_corporate_suffixes(self):
+        groups = _slug_token_groups(["Adani Enterprises Ltd"], "ADANIENT.NS")
+        alias_words = {w for g in groups for w in g}
+        assert "adani" in alias_words and "enterprises" in alias_words
+        assert "ltd" not in alias_words
+        assert "adanient" in alias_words
 
-    def test_keeps_matching_slugs_only(self):
+    def test_one_group_per_alias_plus_one_for_the_ticker(self):
+        groups = _slug_token_groups(["Adani Enterprises", "Adani Group"], "ADANIENT.NS")
+        assert frozenset({"adanient"}) in groups
+        assert frozenset({"adani", "enterprises"}) in groups
+        assert frozenset({"adani", "group"}) in groups
+        assert len(groups) == 3
+
+
+class TestSlugPrefilter:
+    def test_single_word_group_matches_on_one_hit(self):
         candidates = [
             Candidate("https://x.com/news/adani-shares-fall-123.html", "et"),
             Candidate("https://x.com/news/infosys-wins-deal-456.html", "et"),
         ]
-        kept = prefilter(candidates, {"adani"})
+        kept = prefilter(candidates, [frozenset({"adani"})])
         assert len(kept) == 1 and "adani" in kept[0].url
 
-    def test_empty_tokens_keeps_everything(self):
+    def test_no_groups_keeps_everything(self):
         candidates = [Candidate("https://x.com/a", "et")]
-        assert prefilter(candidates, set()) == candidates
+        assert prefilter(candidates, []) == candidates
+
+    def test_conglomerate_sibling_is_excluded(self):
+        """The real bug this exists to fix: a bare "tata" token matched every
+        Tata Group company's articles, not just Tata Consumer's - verified on
+        a live probe where 58 of 99 one-month prefilter hits for "Tata
+        Consumer Products" turned out to be Tata Steel/Motors/TCS stories."""
+        candidates = [
+            Candidate("https://x.com/tata-consumer-products-q3-results.html", "mc"),
+            Candidate("https://x.com/tata-steel-nederland-green-transition.html", "mc"),
+            Candidate("https://x.com/tata-harrier-ev-price-range.html", "mc"),
+            Candidate("https://x.com/tata-consultancy-services-campus.html", "mc"),
+        ]
+        groups = [frozenset({"tata", "consumer", "products"})]
+        kept = prefilter(candidates, groups)
+        assert [c.url for c in kept] == [candidates[0].url]
+
+    def test_two_of_three_alias_words_is_enough(self):
+        """Real slugs often drop a word ("tata-consumer-share-price" has no
+        "products"), so the threshold tolerates 2-of-N rather than requiring
+        every word from a 3+-word company name."""
+        candidates = [Candidate("https://x.com/tata-consumer-share-price.html", "mc")]
+        groups = [frozenset({"tata", "consumer", "products"})]
+        assert prefilter(candidates, groups) == candidates
+
+    def test_two_word_alias_still_requires_both_words(self):
+        """A 2-word alias has no slack: matching only one word is exactly the
+        single-generic-word false-positive this whole fix removes."""
+        candidates = [Candidate("https://x.com/tata-steel-price-target.html", "mc")]
+        groups = [frozenset({"tata", "consumer"})]
+        assert prefilter(candidates, groups) == []
+
+    def test_matching_any_one_group_is_enough(self):
+        candidates = [Candidate("https://x.com/tcpl-quarterly-earnings.html", "mc")]
+        groups = [frozenset({"tata", "consumer", "products"}), frozenset({"tcpl"})]
+        assert prefilter(candidates, groups) == candidates
 
 
 class TestInterleave:

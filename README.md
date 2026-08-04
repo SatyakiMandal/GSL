@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-253 tests
+258 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -81,7 +81,7 @@ FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
 front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 253 tests, no network required
+pytest -q     # 258 tests, no network required
 ```
 
 ### Run the spike
@@ -235,6 +235,24 @@ sitemaps are date-partitioned anyway, which is the axis this tool needs.
 candidates are filtered on their URL slug first — a 97% reduction on the test
 run. The cost is recall: a story that never names the company in its URL is
 missed. That is disclosed in the run stats rather than hidden.
+
+**A real bug: single-word slug tokens matched every conglomerate sibling, not
+just the target company.** The filter used to flatten every alias into one bag
+of independently-OR-matched words, so a company whose name shares a first word
+with siblings under the same group — Tata (Motors/Steel/Power/Consumer/...),
+Adani (Enterprises/Green/Ports/...), Reliance, Bajaj, all extremely common in
+Indian markets — had every sibling's articles pass the filter too. Verified on
+a live probe: for "Tata Consumer Products", 58 of 99 one-month, one-source
+prefilter matches turned out to be Tata Steel, Tata Motors and TCS stories,
+none of which mention "consumer" or "products" anywhere. On a `--limit`-capped
+run that silently burns most of the fetch budget on the wrong company before
+relevance scoring ever sees the candidates — which is what produced the
+implausible "almost no coverage" results in early full-year runs. Fixed by
+matching per-alias groups instead: a multi-word alias now needs **two** of its
+words to co-occur in the slug (not all of them, real slugs often drop a word),
+which rules out a bare "tata" while staying tolerant of which two words a
+headline kept. Re-run against the same probe: 99 candidates → 3, with zero
+loss against the 7 already-confirmed-relevant articles from a real run.
 
 **Round-robin across sources.** Candidates are interleaved before `--limit`
 applies, so a capped run samples every source instead of spending its whole
