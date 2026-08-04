@@ -80,6 +80,10 @@ def prices(tmp_path: Path) -> Path:
     pd.DataFrame({"date": pd.to_datetime(days),
                   "close": 100 * np.cumprod(1 + market)}
                  ).to_csv(tmp_path / "_idx_NSEI.csv", index=False)
+    peer = 0.0002 + 0.9 * market + rng.normal(0, 0.006, len(days))
+    pd.DataFrame({"date": pd.to_datetime(days),
+                  "close": 100 * np.cumprod(1 + peer)}
+                 ).to_csv(tmp_path / "PEER.NS.csv", index=False)
     return tmp_path
 
 
@@ -111,8 +115,10 @@ def build_items() -> list[NewsItem]:
     return items
 
 
-def run_pipeline(price_dir: Path, start=date(2023, 1, 20), end=date(2023, 2, 3)):
+def run_pipeline(price_dir: Path, start=date(2023, 1, 20), end=date(2023, 2, 3),
+                 benchmark2: str | None = None):
     config = RunConfig(company="Testco", ticker="TEST.NS", benchmark="^NSEI",
+                       benchmark2=benchmark2,
                        start=start, end=end, aliases=["Testco Ltd", "Testco"],
                        event_window=(-1, 3))
     items = build_items()
@@ -142,6 +148,53 @@ class TestEndToEnd:
         flagged = {i.day for i in analysis.incidents}
         assert date(2023, 1, 25) in flagged
         assert date(2023, 1, 27) in flagged
+
+
+class TestSecondaryBenchmark:
+    def test_not_requested_leaves_secondary_empty(self, prices):
+        analysis, _, _ = run_pipeline(prices)
+        assert analysis.secondary_daily is None
+        assert analysis.secondary_meta == {}
+
+    def test_available_peer_populates_secondary_daily_and_meta(self, prices):
+        analysis, _, _ = run_pipeline(prices, benchmark2="PEER.NS")
+        assert analysis.secondary_meta["ticker"] == "PEER.NS"
+        assert analysis.secondary_meta["model"] in ("market-model", "market-adjusted")
+        assert isinstance(analysis.secondary_meta["beta"], float)
+        assert analysis.secondary_daily is not None
+        assert not analysis.secondary_daily.empty
+        assert list(analysis.secondary_daily.columns) == [
+            "secondary_close", "secondary_return",
+            "secondary_abnormal_return", "secondary_abnormal_return_z",
+        ]
+        # Same trading days as the primary daily table.
+        assert set(analysis.secondary_daily.index) == set(analysis.daily.index)
+
+    def test_primary_analysis_is_unaffected_by_requesting_a_peer(self, prices):
+        """Adding --benchmark2 must not change incident detection or the
+        primary abnormal-return series - it is a second, additive lens."""
+        without, _, _ = run_pipeline(prices)
+        with_peer, _, _ = run_pipeline(prices, benchmark2="PEER.NS")
+        assert {i.day for i in without.incidents} == {i.day for i in with_peer.incidents}
+        pd.testing.assert_series_equal(
+            without.daily["abnormal_return"], with_peer.daily["abnormal_return"])
+
+    def test_missing_peer_ticker_degrades_gracefully(self, prices):
+        """A bad/unreachable peer ticker must not sink the whole analysis -
+        only the secondary comparison is unavailable."""
+        analysis, _, _ = run_pipeline(prices, benchmark2="NOSUCHTICKER.NS")
+        assert analysis.secondary_daily is None
+        assert analysis.secondary_meta["ticker"] == "NOSUCHTICKER.NS"
+        assert "unavailable" in analysis.secondary_meta["note"]
+        # Primary analysis still ran to completion.
+        assert not analysis.daily.empty
+        flagged = {i.day for i in analysis.incidents}
+        assert date(2023, 1, 25) in flagged
+
+    def test_html_report_renders_with_secondary_benchmark(self, prices):
+        analysis, _, _ = run_pipeline(prices, benchmark2="PEER.NS")
+        html = build_html(analysis)
+        assert "PEER.NS" in html
 
     def test_irrelevant_story_is_dropped(self, prices):
         _, kept, dropped = run_pipeline(prices)

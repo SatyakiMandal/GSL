@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-294 tests
+299 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -113,7 +113,7 @@ FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
 front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 294 tests, no network required
+pytest -q     # 299 tests, no network required
 ```
 
 ### Run the spike
@@ -421,7 +421,10 @@ python -m ceia.analyze --company "Adani Enterprises" \
 
 Flags: `--ticker` (skips auto-detection; see
 [Ticker auto-detection](#ticker-auto-detection)), `--exchange` (`NSE` or
-`BSE`, biases auto-detection, default `NSE`), `--event-window BEFORE AFTER`
+`BSE`, biases auto-detection, default `NSE`), `--benchmark2` (optional
+second index/peer ticker for a side-by-side abnormal-return comparison —
+see [Complementary signals](#complementary-signals-correlation-and-volume)),
+`--event-window BEFORE AFTER`
 (default `-1 3`), `--return-z`, `--coverage-z`, `--lead-in-days`,
 `--price-csv DIR` (offline prices), `--api-key KEY` (Alpha Vantage key on the
 command line — no environment variable needed, which sidesteps a real trap on
@@ -532,6 +535,24 @@ neither changes which days get flagged or how they are scored.
   groups days that already exist in the daily table, never changes which
   days are flagged or how they're scored. CLI, HTML report, and GUI all
   show it when at least one day has a groupable emotion.
+* **Secondary/peer benchmark** (`--benchmark2` / the GUI's "Secondary
+  benchmark / peer" field, `ceia/analyze.py:analyse`). Recomputes the
+  company's abnormal return a second time against any second ticker the
+  user supplies — a sector index, a direct competitor, whatever they name —
+  using the same market-model/market-adjusted machinery as the primary
+  benchmark, entirely independently. The primary `--benchmark` (default
+  `^NSEI`) still drives incident detection, scoring and the direction
+  check; the secondary comparison is additive only, shown as an extra
+  column in the daily table, a beta stat, and a per-incident "vs
+  {ticker}" line in the CLI, HTML report and GUI. Deliberately **not**
+  hardcoded to any specific sector-index symbol: Yahoo is unreachable from
+  this build sandbox, so no sector-index ticker could be verified here —
+  asking the user for the ticker sidesteps guessing at a symbol that might
+  not exist. A bad or unreachable secondary ticker degrades to "not shown"
+  (a `PriceError`, caught and reported in the note) rather than failing the
+  whole run; the primary analysis is unaffected either way, and an
+  integration test confirms the primary abnormal-return series and
+  incident set are byte-identical whether or not `--benchmark2` is passed.
 
 ---
 

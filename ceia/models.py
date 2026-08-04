@@ -89,6 +89,11 @@ class RunConfig:
     ticker: str
     exchange: str = "NSE"
     benchmark: str = "^NSEI"
+    # Optional second index/peer ticker for a side-by-side abnormal-return
+    # comparison — e.g. a sector peer instead of the broad market. Purely
+    # additive: the primary `benchmark` above still drives incident detection
+    # and scoring, this is a second lens shown alongside it.
+    benchmark2: str | None = None
     start: date = date.today()
     end: date = date.today()
     aliases: list[str] = field(default_factory=list)

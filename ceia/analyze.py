@@ -44,10 +44,17 @@ class Analysis:
     unattributed: list[NewsItem] = field(default_factory=list)
     correlation: dict = field(default_factory=dict)
     emotion_summary: dict = field(default_factory=dict)
+    secondary_daily: pd.DataFrame | None = None
+    secondary_meta: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         table = self.daily.reset_index()
         table["date"] = table["date"].astype(str)
+        secondary = dict(self.secondary_meta)
+        if self.secondary_daily is not None and not self.secondary_daily.empty:
+            secondary_table = self.secondary_daily.reset_index()
+            secondary_table["date"] = secondary_table["date"].astype(str)
+            secondary["daily"] = json.loads(secondary_table.to_json(orient="records"))
         return {
             "company": self.config.company,
             "ticker": self.config.ticker,
@@ -60,6 +67,7 @@ class Analysis:
             "caveats": self.caveats,
             "sentiment_return_correlation": self.correlation,
             "emotion_return_summary": self.emotion_summary,
+            "secondary_benchmark": secondary,
             "unattributed_items": [
                 {"url": i.url, "source": i.source, "headline": i.headline,
                  "reason": i.timestamp_confidence}
@@ -116,6 +124,53 @@ def analyse(
     correlation = eventstudy.sentiment_return_correlation(table)
     emotion_summary = eventstudy.emotion_valence_summary(table)
 
+    secondary_daily = None
+    secondary_meta: dict = {}
+    if config.benchmark2:
+        secondary_meta["ticker"] = config.benchmark2
+        try:
+            frame2, model2, price_meta2 = returns.build(
+                config.ticker, config.benchmark2, config.start, config.end,
+                lead_in_days=lead_in_days, providers=providers,
+            )
+        except PriceError as exc:
+            # A bad or unreachable peer ticker should not sink the whole run
+            # - the primary benchmark comparison above is unaffected either
+            # way, so this degrades to "not shown" rather than a hard failure.
+            secondary_meta["note"] = f"secondary benchmark unavailable: {exc}"
+            log.warning("secondary benchmark: %s", exc)
+        else:
+            secondary_daily = frame2.loc[
+                pd.Timestamp(config.start):pd.Timestamp(config.end),
+                ["close", "benchmark_close", "return", "benchmark_return",
+                 "abnormal_return", "abnormal_return_z"],
+            ].rename(columns={
+                "benchmark_close": "secondary_close",
+                "benchmark_return": "secondary_return",
+                "abnormal_return": "secondary_abnormal_return",
+                "abnormal_return_z": "secondary_abnormal_return_z",
+            }).drop(columns=["close", "return"])
+            # `table`'s index is plain date objects (build_daily_table sets
+            # "date" as the index key, one date per row), while frame2's
+            # index is a DatetimeIndex - joining or comparing the two without
+            # normalising first would silently match nothing (different
+            # dtypes never compare equal) rather than raise, exactly the
+            # "looks fine, finds zero rows" trap this codebase has hit
+            # before with the CDATA sitemap regex and the --limit truncation.
+            secondary_daily.index = pd.Index(
+                [ts.date() for ts in secondary_daily.index], name="date")
+            secondary_meta.update({
+                "provider": price_meta2.get("benchmark_provider"),
+                "model": model2.kind,
+                "alpha": model2.alpha,
+                "beta": model2.beta,
+                "r_squared": model2.r_squared,
+                "model_note": model2.note,
+                "note": (f"abnormal return of {config.ticker} recomputed against "
+                        f"{config.benchmark2} as a second, independent benchmark "
+                        "- a peer or sector index rather than the broad market."),
+            })
+
     return Analysis(
         config=config,
         daily=table,
@@ -127,6 +182,8 @@ def analyse(
         unattributed=align.unattributed(items),
         correlation=correlation,
         emotion_summary=emotion_summary,
+        secondary_daily=secondary_daily,
+        secondary_meta=secondary_meta,
     )
 
 
@@ -172,6 +229,15 @@ def _print(analysis: Analysis) -> None:
                   f"mean sentiment={g['mean_weighted_sentiment']:+.2f}  "
                   f"({', '.join(g['labels_seen'])})")
 
+    sec_meta = analysis.secondary_meta
+    if sec_meta.get("model") is not None:
+        print(f"Secondary benchmark ({sec_meta['ticker']}): {sec_meta['model']} "
+              f"beta={sec_meta['beta']:.3f} R2={sec_meta['r_squared']:.3f} — "
+              f"{sec_meta['note']}")
+    elif sec_meta.get("note"):
+        print(f"Secondary benchmark ({sec_meta.get('ticker', '?')}): "
+              f"{sec_meta['note']}")
+
     if analysis.daily.empty:
         print("\nNo trading days in the analysis window.")
         return
@@ -201,6 +267,15 @@ def _print(analysis: Analysis) -> None:
         if incident.volume_z and pd.notna(incident.volume):
             print(f"   volume: {incident.volume:,.0f} (z={incident.volume_z:+.2f}) "
                   "— a corroborating signal, not part of the flagging test")
+        if analysis.secondary_daily is not None:
+            sec_row = analysis.secondary_daily.loc[
+                analysis.secondary_daily.index == incident.day]
+            if not sec_row.empty:
+                sec_ar = sec_row["secondary_abnormal_return"].iloc[0]
+                sec_z = sec_row["secondary_abnormal_return_z"].iloc[0]
+                if pd.notna(sec_ar):
+                    print(f"   vs {analysis.secondary_meta['ticker']}: "
+                          f"abnormal return {sec_ar * 100:+.2f}% (z={sec_z:+.2f})")
         print(f"   coverage: {incident.item_count} item(s) (z={incident.coverage_z:+.2f}), "
               f"tone {incident.mean_sentiment:+.2f} - {agree} the price move")
         if car and car.get("days"):
@@ -227,6 +302,12 @@ def main() -> None:
     parser.add_argument("--exchange", default="NSE",
                         help="Preferred exchange for ticker auto-detection (NSE or BSE).")
     parser.add_argument("--benchmark", default="^NSEI")
+    parser.add_argument("--benchmark2", default=None,
+                        help="Optional second index/peer ticker (e.g. a sector "
+                             "index or a direct competitor) for a side-by-side "
+                             "abnormal-return comparison. The primary --benchmark "
+                             "still drives incident detection; this is a second, "
+                             "purely descriptive lens.")
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--alias", action="append", default=[])
@@ -279,6 +360,7 @@ def main() -> None:
     try:
         config = RunConfig(
             company=args.company, ticker=ticker, benchmark=args.benchmark,
+            benchmark2=args.benchmark2,
             start=date.fromisoformat(args.start), end=date.fromisoformat(args.end),
             aliases=args.alias, event_window=tuple(args.event_window),
             min_relevance=args.min_relevance,

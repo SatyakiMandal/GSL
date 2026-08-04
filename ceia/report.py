@@ -126,10 +126,12 @@ def _volume_cell(row: pd.Series) -> str:
     return f"<td>{float(volume):,.0f}{z_part}</td>"
 
 
-def _daily_table(daily: pd.DataFrame, incident_days: set[date]) -> str:
+def _daily_table(daily: pd.DataFrame, incident_days: set[date],
+                 secondary_ticker: str | None = None) -> str:
     if daily.empty:
         return '<p class="empty">No trading days in the analysis window.</p>'
     has_volume = "volume" in daily.columns
+    has_secondary = secondary_ticker and "secondary_abnormal_return" in daily.columns
     rows = []
     for day, row in daily.iterrows():
         # pandas Timestamp subclasses date, so an isinstance guard would leave
@@ -138,6 +140,11 @@ def _daily_table(daily: pd.DataFrame, incident_days: set[date]) -> str:
         day = pd.Timestamp(day).date()
         flagged = ' class="flagged"' if day in incident_days else ""
         abnormal = float(row["abnormal_return"])
+        secondary_cell = ""
+        if has_secondary:
+            sec = row.get("secondary_abnormal_return")
+            secondary_cell = (f"<td class=\"{_cls(sec)}\">{_pct(sec)}</td>"
+                              if pd.notna(sec) else "<td>—</td>")
         rows.append(
             f"<tr{flagged}><td>{day:%d %b %Y}</td>"
             f"<td>{float(row['close']):,.2f}</td>"
@@ -145,6 +152,7 @@ def _daily_table(daily: pd.DataFrame, incident_days: set[date]) -> str:
             f"<td class=\"{_cls(row['benchmark_return'])}\">{_pct(row['benchmark_return'])}</td>"
             f"<td class=\"{_cls(abnormal)}\"><strong>{_pct(abnormal)}</strong></td>"
             f"<td>{float(row['abnormal_return_z']):+.2f}</td>"
+            + secondary_cell
             + (_volume_cell(row) if has_volume else "")
             + f"<td>{int(row['unique_count'])}</td>"
             f"<td class=\"{_cls(row['weighted_sentiment'])}\">"
@@ -152,10 +160,13 @@ def _daily_table(daily: pd.DataFrame, incident_days: set[date]) -> str:
             f"<td class=\"txt\">{escape(str(row['dominant_event'] or '—'))}</td></tr>"
         )
     volume_header = "<th>Volume</th>" if has_volume else ""
+    secondary_header = (f"<th>Abnormal vs {escape(secondary_ticker)}</th>"
+                        if has_secondary else "")
     return (
         '<div class="scroll"><table><thead><tr>'
         "<th>Date</th><th>Close</th><th>Return</th><th>Benchmark</th>"
-        f"<th>Abnormal</th><th>z</th>{volume_header}<th>Items</th><th>Tone</th>"
+        f"<th>Abnormal</th><th>z</th>{secondary_header}{volume_header}"
+        "<th>Items</th><th>Tone</th>"
         '<th class="txt">Main topic</th></tr></thead><tbody>'
         + "".join(rows) + "</tbody></table></div>"
     )
@@ -296,6 +307,13 @@ def build_html(analysis) -> str:
     emotion_summary = getattr(analysis, "emotion_summary", {}) or {}
     emotion_table = _emotion_valence_table(emotion_summary)
 
+    secondary_meta = getattr(analysis, "secondary_meta", {}) or {}
+    secondary_daily = getattr(analysis, "secondary_daily", None)
+    secondary_ticker = secondary_meta.get("ticker") if secondary_daily is not None else None
+    daily_display = daily
+    if secondary_ticker:
+        daily_display = daily.join(secondary_daily[["secondary_abnormal_return"]])
+
     stats = "".join([
         _stat("Trading days", str(len(daily))),
         _stat("News items", str(news_count)),
@@ -304,7 +322,8 @@ def build_html(analysis) -> str:
         _stat("Beta", f"{price.get('beta', float('nan')):.2f}"),
         _stat("Published after close", str(news_stats.get("after_close", 0))),
         _stat("Sentiment/return correlation", corr_display),
-    ])
+    ] + ([_stat(f"Beta vs {secondary_ticker}", f"{secondary_meta.get('beta', float('nan')):.2f}")]
+        if secondary_ticker and secondary_meta.get("beta") is not None else []))
 
     caveats = "".join(f"<li>{escape(note)}</li>" for note in analysis.caveats)
 
@@ -380,7 +399,7 @@ alongside tone, not a substitute for it — see Method and provenance below.</p>
 
 <h2>Daily detail</h2>
 <p>Every trading day in the window. Highlighted rows are flagged days.</p>
-{_daily_table(daily, incident_days)}
+{_daily_table(daily_display, incident_days, secondary_ticker)}
 
 {unattributed}
 
@@ -413,6 +432,7 @@ across a handful of trading days is descriptive, not a significance test —
 treat it as a single additional lens on the same daily table above, not as
 proof that sentiment predicts price.</p>
 {f'<p><strong>Emotion valence vs return.</strong> {escape(emotion_summary.get("note", ""))}</p>{emotion_table}' if emotion_table else ''}
+{f'<p><strong>Secondary benchmark ({escape(secondary_ticker)}).</strong> {escape(secondary_meta.get("note", ""))}</p>' if secondary_ticker else (f'<p><strong>Secondary benchmark.</strong> {escape(secondary_meta["note"])}</p>' if secondary_meta.get("note") else '')}
 </div>
 
 <h3>Source availability</h3>

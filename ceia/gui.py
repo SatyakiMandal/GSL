@@ -213,6 +213,13 @@ with st.form("run_config"):
                                     help="Used to pick between .NS/.BO when "
                                          "auto-detecting the ticker.")
         benchmark = st.text_input("Benchmark", value="^NSEI", key="benchmark")
+        benchmark2 = st.text_input(
+            "Secondary benchmark / peer (optional)", value="", key="benchmark2",
+            help="A sector index or a direct competitor's ticker. Shown as a "
+                 "second, purely descriptive abnormal-return comparison "
+                 "alongside the primary benchmark above — it never affects "
+                 "incident detection or ranking.",
+        )
         aliases_raw = st.text_input(
             "Aliases (comma-separated, optional)", value="",
             help="Short names, product names, misspellings — anything the "
@@ -290,6 +297,7 @@ if submitted:
     try:
         config = RunConfig(
             company=company, ticker=resolved_ticker, benchmark=benchmark, exchange=exchange,
+            benchmark2=benchmark2.strip() or None,
             start=start, end=end, aliases=aliases,
             event_window=(int(event_before), int(event_after)),
             min_relevance=min_relevance,
@@ -363,6 +371,15 @@ if submitted:
             if (g := emotion_groups.get(v))
         ]
         st.dataframe(pd.DataFrame(valence_rows), use_container_width=True, hide_index=True)
+
+    sec_meta = analysis.secondary_meta
+    if sec_meta.get("model") is not None:
+        st.caption(f"Secondary benchmark ({sec_meta['ticker']}): {sec_meta['model']}, "
+                  f"beta={sec_meta['beta']:.2f}, R² = {sec_meta['r_squared']:.3f} — "
+                  f"{sec_meta['note']}")
+    elif sec_meta.get("note"):
+        st.caption(f"Secondary benchmark ({sec_meta.get('ticker', '?')}) not "
+                  f"available — {sec_meta['note']}")
 
     html_report = build_html(analysis)
     st.download_button("Download report.html", data=html_report,
