@@ -472,6 +472,19 @@ Both were invisible to unit tests and only appeared when the whole pipeline ran:
    news-carrying days, and the output says so in bold terms rather than quietly
    changing its own bar.
 
+### The market-model fallback was silent until it wasn't
+
+`ceia/returns.py` had a logger and never called it. A run that falls back
+from the fitted market model to market-adjusted (`beta` fixed at 1.0) —
+because there wasn't enough clean lead-in history — is a real accuracy hit
+(a high-beta stock's abnormal return comes back systematically inflated),
+but the reason was only ever visible by reading the finished report's
+provenance section afterward. It now logs at the moment it happens: raw row
+counts per price series, how many survived the inner-join alignment, and the
+fitted `alpha`/`beta`/`R²` on success or the exact observation count on
+fallback — the same numbers that were already being computed and thrown into
+`model_note`, just surfaced live instead of only on request.
+
 ---
 
 ## Phase 3 — Reporting

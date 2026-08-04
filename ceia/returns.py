@@ -96,20 +96,29 @@ def fit_market_model(
     window = window.tail(estimation_days)
 
     if len(window) < MIN_ESTIMATION_DAYS:
+        note = (f"only {len(window)} estimation observations before "
+                f"{analysis_start} (need {MIN_ESTIMATION_DAYS}); "
+                "using market-adjusted returns with beta fixed at 1.0")
+        # This is silent otherwise - the reason only ever showed up buried in
+        # the final report's provenance section. A run that falls back here
+        # is a real accuracy hit (a high-beta stock gets a systematically
+        # inflated abnormal return), worth seeing the moment it happens
+        # rather than discovering it after the fact.
+        log.warning("market model: %s", note)
         return MarketModel(
             alpha=0.0, beta=1.0, residual_sd=float("nan"),
             observations=len(window), r_squared=float("nan"), fitted=False,
-            note=(f"only {len(window)} estimation observations before "
-                  f"{analysis_start} (need {MIN_ESTIMATION_DAYS}); "
-                  "using market-adjusted returns with beta fixed at 1.0"),
+            note=note,
         )
 
     x = window["benchmark_return"].to_numpy()
     y = window["return"].to_numpy()
     if np.std(x) == 0:
+        note = ("benchmark has zero variance in the estimation window; "
+                "using market-adjusted returns")
+        log.warning("market model: %s", note)
         return MarketModel(0.0, 1.0, float("nan"), len(window), float("nan"),
-                           False, "benchmark has zero variance in the "
-                                  "estimation window; using market-adjusted returns")
+                           False, note)
 
     beta, alpha = np.polyfit(x, y, 1)
     residuals = y - (alpha + beta * x)
@@ -119,6 +128,9 @@ def fit_market_model(
     ss_tot = float(np.sum((y - y.mean()) ** 2))
     r_squared = 1 - ss_res / ss_tot if ss_tot else float("nan")
 
+    log.info("market model: fitted on %d trading days before %s "
+             "(alpha=%.5f beta=%.3f R2=%.3f)",
+             len(window), analysis_start, alpha, beta, r_squared)
     return MarketModel(
         alpha=float(alpha), beta=float(beta), residual_sd=residual_sd,
         observations=len(window), r_squared=float(r_squared), fitted=True,
@@ -214,11 +226,19 @@ def build(
     fetch_end = end + timedelta(days=tail_days)
     company, company_provider = load_prices(ticker, fetch_start, fetch_end, providers)
     index_frame, benchmark_provider = load_prices(benchmark, fetch_start, fetch_end, providers)
+    log.info("prices: %s via %s (%d rows), %s via %s (%d rows), requested "
+             "%s to %s (%d lead-in day(s))",
+             ticker, company_provider, len(company),
+             benchmark, benchmark_provider, len(index_frame),
+             fetch_start, fetch_end, lead_in_days)
 
     frame = align_series(company, index_frame)
     if frame.empty:
         raise PriceError(
             f"no overlapping trading dates for {ticker} and {benchmark}")
+    log.info("prices: %d rows share a trading date on both series "
+             "(dropped %d company-only, %d benchmark-only)",
+             len(frame), len(company) - len(frame), len(index_frame) - len(frame))
 
     model = fit_market_model(frame, start, estimation_days=estimation_days)
     frame = abnormal_returns(frame, model)
