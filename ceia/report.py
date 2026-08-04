@@ -161,6 +161,33 @@ def _daily_table(daily: pd.DataFrame, incident_days: set[date]) -> str:
     )
 
 
+def _emotion_valence_table(emotion_summary: dict) -> str:
+    groups = (emotion_summary or {}).get("groups") or {}
+    if not groups:
+        return ""
+    rows = []
+    for valence in ("positive", "negative", "ambiguous"):
+        g = groups.get(valence)
+        if not g:
+            continue
+        rows.append(
+            f"<tr><td class=\"txt\">{valence}</td><td>{g['n_days']}</td>"
+            f"<td class=\"{_cls(g['mean_abnormal_return'])}\">"
+            f"{_pct(g['mean_abnormal_return'])}</td>"
+            f"<td class=\"{_cls(g['mean_weighted_sentiment'])}\">"
+            f"{g['mean_weighted_sentiment']:+.2f}</td>"
+            f"<td class=\"txt\">{escape(', '.join(g['labels_seen']))}</td></tr>"
+        )
+    if not rows:
+        return ""
+    return (
+        '<div class="scroll"><table><thead><tr><th class="txt">Valence</th>'
+        "<th>Days</th><th>Mean abnormal return</th><th>Mean sentiment</th>"
+        '<th class="txt">Labels seen</th></tr></thead><tbody>'
+        + "".join(rows) + "</tbody></table></div>"
+    )
+
+
 def _incident_table(incidents: list[Incident], window: tuple[int, int]) -> str:
     if not incidents:
         return ('<p class="empty">No day combined notable coverage with an unusual '
@@ -266,6 +293,8 @@ def build_html(analysis) -> str:
     correlation = getattr(analysis, "correlation", {}) or {}
     corr_display = (f"r = {correlation['r']:+.3f}"
                     if correlation.get("r") is not None else "n/a")
+    emotion_summary = getattr(analysis, "emotion_summary", {}) or {}
+    emotion_table = _emotion_valence_table(emotion_summary)
 
     stats = "".join([
         _stat("Trading days", str(len(daily))),
@@ -383,6 +412,7 @@ below a 30% confidence threshold rather than forced to a low-confidence guess.</
 across a handful of trading days is descriptive, not a significance test —
 treat it as a single additional lens on the same daily table above, not as
 proof that sentiment predicts price.</p>
+{f'<p><strong>Emotion valence vs return.</strong> {escape(emotion_summary.get("note", ""))}</p>{emotion_table}' if emotion_table else ''}
 </div>
 
 <h3>Source availability</h3>

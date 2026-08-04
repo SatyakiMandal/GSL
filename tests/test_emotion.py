@@ -13,8 +13,37 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ceia.emotion import EmotionResult, LABELS, pick_emotions  # noqa: E402
+from ceia.emotion import (  # noqa: E402
+    LABELS, VALENCE_GROUPS, EmotionResult, pick_emotions, valence_of,
+)
 from ceia.models import NewsItem  # noqa: E402
+
+
+class TestValenceGroups:
+    def test_every_group_label_is_a_real_emotion_label(self):
+        all_grouped = {label for labels in VALENCE_GROUPS.values() for label in labels}
+        assert all_grouped <= set(LABELS)
+
+    def test_counts_match_the_paper_12_11_4(self):
+        assert len(VALENCE_GROUPS["positive"]) == 12
+        assert len(VALENCE_GROUPS["negative"]) == 11
+        assert len(VALENCE_GROUPS["ambiguous"]) == 4
+
+    def test_every_non_neutral_label_is_grouped_exactly_once(self):
+        all_grouped = [label for labels in VALENCE_GROUPS.values() for label in labels]
+        assert len(all_grouped) == len(set(all_grouped)), "a label appears in two groups"
+        expected = set(LABELS) - {"neutral"}
+        assert set(all_grouped) == expected
+
+    def test_valence_of_known_labels(self):
+        assert valence_of("joy") == "positive"
+        assert valence_of("fear") == "negative"
+        assert valence_of("surprise") == "ambiguous"
+
+    def test_valence_of_neutral_and_unknown_is_blank(self):
+        assert valence_of("neutral") == ""
+        assert valence_of("") == ""
+        assert valence_of("not-a-real-label") == ""
 
 
 class TestPickEmotions:

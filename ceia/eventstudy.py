@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 
 from .dedupe import cluster_sizes
+from .emotion import valence_of
 from .models import NewsItem
 from .returns import cumulative_abnormal_return
 
@@ -357,6 +358,66 @@ def sentiment_return_correlation(table: pd.DataFrame) -> dict:
         "note": (f"Pearson r over {n} news-carrying day(s) in this run; "
                  "descriptive only, not a significance test, and not "
                  "comparable across runs with different day counts."),
+    }
+
+
+def emotion_valence_summary(table: pd.DataFrame) -> dict:
+    """Mean abnormal return per GoEmotions sentiment group (PRD-adjacent extra).
+
+    ``dominant_emotion`` is already one label per day (the most common
+    surfaced emotion among that day's items — see ``aggregate_by_day``). This
+    buckets those labels into the paper's own positive/negative/ambiguous
+    groups (Demszky et al., 2020, Section 5.1; see ``ceia/emotion.py``) and
+    reports the mean abnormal return for days in each bucket, alongside
+    FinBERT's own weighted sentiment for the same days as a cross-check.
+
+    Purely descriptive, like the correlation stat above: it groups days that
+    already exist in the table, it does not change which days are incidents
+    or how they are scored. Days with no surfaced emotion (blank
+    ``dominant_emotion`` — the common case on formal financial-press
+    headlines, see ``pick_emotions``) or no news at all are excluded, not
+    folded into a fourth bucket, since a blank label means "GoEmotions had
+    nothing confident to say," not "neutral valence."
+    """
+    if table.empty or "dominant_emotion" not in table.columns:
+        return {"groups": {}, "note": "no daily table to summarise."}
+
+    covered = table[table["dominant_emotion"].astype(str).str.len() > 0].copy()
+    covered = covered.dropna(subset=["abnormal_return"])
+    if covered.empty:
+        return {
+            "groups": {},
+            "note": ("no day had a confident-enough dominant emotion to "
+                     "group by valence."),
+        }
+
+    covered["valence"] = covered["dominant_emotion"].map(valence_of)
+    covered = covered[covered["valence"] != ""]
+    if covered.empty:
+        return {
+            "groups": {},
+            "note": "no day's dominant emotion mapped to a known valence group.",
+        }
+
+    groups = {}
+    for valence in ("positive", "negative", "ambiguous"):
+        subset = covered[covered["valence"] == valence]
+        if subset.empty:
+            continue
+        groups[valence] = {
+            "n_days": int(len(subset)),
+            "mean_abnormal_return": round(float(subset["abnormal_return"].mean()), 5),
+            "mean_weighted_sentiment": round(float(subset["weighted_sentiment"].mean()), 4),
+            "labels_seen": sorted(subset["dominant_emotion"].unique().tolist()),
+        }
+
+    return {
+        "groups": groups,
+        "note": (f"{len(covered)} day(s) had a confident dominant emotion "
+                 "(GoEmotions, headline-only, secondary to FinBERT); grouped "
+                 "by the paper's own positive/negative/ambiguous clustering. "
+                 "Descriptive only — small day counts per group, and this "
+                 "never affects incident flagging or ranking."),
     }
 
 

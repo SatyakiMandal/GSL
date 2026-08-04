@@ -18,6 +18,7 @@ from ceia.eventstudy import (  # noqa: E402
     attach_headlines,
     build_daily_table,
     caveats,
+    emotion_valence_summary,
     rank_incidents,
     sentiment_return_correlation,
 )
@@ -436,3 +437,77 @@ class TestSentimentReturnCorrelation:
         result = sentiment_return_correlation(table)
         assert result["r"] is None
         assert result["n"] == 0
+
+
+class TestEmotionValenceSummary:
+    def _table(self, days_returns_emotions):
+        """days_returns_emotions: list of (day, company_return, benchmark_return, emotion)."""
+        anchor = days_returns_emotions[0][0] - pd.Timedelta(days=1)
+        returns_by_day = {anchor: (0.0, 0.0)}
+        returns_by_day.update({d: (r, b) for d, r, b, _ in days_returns_emotions})
+        frame = price_frame(returns_by_day)
+        news = [item(d, 0.0, url=f"n{i}", emotion=e)
+               for i, (d, _, _, e) in enumerate(days_returns_emotions)]
+        days = [d for d, _, _, _ in days_returns_emotions]
+        return build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
+
+    def test_groups_by_positive_negative_ambiguous(self):
+        days = [date(2023, 1, 3 + i) for i in range(4)]
+        table = self._table([
+            (days[0], 0.03, 0.0, "joy"),
+            (days[1], -0.04, 0.0, "fear"),
+            (days[2], 0.01, 0.0, "admiration"),
+            (days[3], 0.00, 0.0, "surprise"),
+        ])
+        result = emotion_valence_summary(table)
+        groups = result["groups"]
+        assert set(groups) == {"positive", "negative", "ambiguous"}
+        assert groups["positive"]["n_days"] == 2
+        assert groups["positive"]["labels_seen"] == ["admiration", "joy"]
+        assert groups["negative"]["n_days"] == 1
+        assert groups["negative"]["mean_abnormal_return"] == pytest.approx(
+            table.loc[table["dominant_emotion"] == "fear", "abnormal_return"].iloc[0])
+        assert groups["ambiguous"]["n_days"] == 1
+
+    def test_days_with_no_emotion_are_excluded(self):
+        days = [date(2023, 1, 3 + i) for i in range(3)]
+        table = self._table([
+            (days[0], 0.02, 0.0, "joy"),
+            (days[1], -0.01, 0.0, ""),
+            (days[2], 0.01, 0.0, ""),
+        ])
+        result = emotion_valence_summary(table)
+        assert set(result["groups"]) == {"positive"}
+        assert result["groups"]["positive"]["n_days"] == 1
+
+    def test_neutral_label_is_not_a_valence_group(self):
+        """'neutral' is in LABELS but excluded from all three valence groups."""
+        days = [date(2023, 1, 3 + i) for i in range(2)]
+        table = self._table([
+            (days[0], 0.02, 0.0, "neutral"),
+            (days[1], -0.01, 0.0, "joy"),
+        ])
+        result = emotion_valence_summary(table)
+        assert set(result["groups"]) == {"positive"}
+
+    def test_no_confident_emotion_anywhere_returns_empty_groups(self):
+        days = [date(2023, 1, 3 + i) for i in range(2)]
+        table = self._table([
+            (days[0], 0.02, 0.0, ""),
+            (days[1], -0.01, 0.0, ""),
+        ])
+        result = emotion_valence_summary(table)
+        assert result["groups"] == {}
+        assert "no day" in result["note"]
+
+    def test_empty_table_does_not_crash(self):
+        table = pd.DataFrame(columns=[
+            "abnormal_return", "dominant_emotion", "weighted_sentiment",
+        ])
+        result = emotion_valence_summary(table)
+        assert result["groups"] == {}
+
+    def test_missing_dominant_emotion_column_does_not_crash(self):
+        table = pd.DataFrame({"abnormal_return": [0.01, -0.02]})
+        result = emotion_valence_summary(table)
+        assert result["groups"] == {}

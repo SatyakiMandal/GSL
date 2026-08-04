@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-283 tests
+294 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -113,7 +113,7 @@ FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
 front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 283 tests, no network required
+pytest -q     # 294 tests, no network required
 ```
 
 ### Run the spike
@@ -512,6 +512,26 @@ neither changes which days get flagged or how they are scored.
   first place. Confirmed unchanged: the already-validated Adani/Hindenburg
   ranking (`score` and `abnormal_return_z` on the #1 incident) was
   byte-identical before and after wiring volume through.
+* **Emotion valence vs return** (`ceia/eventstudy.py:emotion_valence_summary`,
+  grouping from `ceia/emotion.py:VALENCE_GROUPS`). Buckets each day's
+  `dominant_emotion` into the three sentiment groups GoEmotions' own paper
+  clusters its 27 labels into — **positive** (12 labels: admiration,
+  amusement, approval, caring, desire, excitement, gratitude, joy, love,
+  optimism, pride, relief), **negative** (11: anger, annoyance,
+  disappointment, disapproval, disgust, embarrassment, fear, grief,
+  nervousness, remorse, sadness), **ambiguous** (4: confusion, curiosity,
+  realization, surprise) — verified against the paper text directly
+  (Demszky et al., 2020, Section 5.1 / Figure 2), not assumed from the label
+  names (`surprise` and `realization` read as neutral-ish in isolation, but
+  the paper places both under "ambiguous"). `neutral` and days with no
+  confident emotion (the common case on formal headlines — see
+  `pick_emotions`) are excluded from every group rather than folded into a
+  fourth bucket, since a blank label means "GoEmotions had nothing
+  confident to say," not "neutral valence." Reports mean abnormal return and
+  mean FinBERT sentiment per group. Same rule as correlation and volume:
+  groups days that already exist in the daily table, never changes which
+  days are flagged or how they're scored. CLI, HTML report, and GUI all
+  show it when at least one day has a groupable emotion.
 
 ---
 

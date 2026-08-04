@@ -351,6 +351,19 @@ if submitted:
     elif corr.get("note"):
         st.caption(f"Sentiment/return correlation not computed — {corr['note']}")
 
+    emotion_groups = (analysis.emotion_summary or {}).get("groups") or {}
+    if emotion_groups:
+        st.caption("Emotion valence vs abnormal return (GoEmotions, descriptive only):")
+        valence_rows = [
+            {"valence": v, "days": g["n_days"],
+             "mean abnormal return": f"{g['mean_abnormal_return'] * 100:+.2f}%",
+             "mean sentiment": f"{g['mean_weighted_sentiment']:+.2f}",
+             "labels seen": ", ".join(g["labels_seen"])}
+            for v in ("positive", "negative", "ambiguous")
+            if (g := emotion_groups.get(v))
+        ]
+        st.dataframe(pd.DataFrame(valence_rows), use_container_width=True, hide_index=True)
+
     html_report = build_html(analysis)
     st.download_button("Download report.html", data=html_report,
                        file_name="report.html", mime="text/html")

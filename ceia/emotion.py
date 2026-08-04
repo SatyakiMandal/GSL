@@ -49,6 +49,40 @@ LABELS = [
 # nothing is reported as "surfaced" — a low top score is noise, not signal.
 DEFAULT_THRESHOLD = 0.30
 
+# The paper's own hierarchical grouping (Demszky et al., 2020, Section 5.1 /
+# Figure 2: emotions cluster into top-level sentiment groups). Verified
+# against the paper text directly (12 positive + 11 negative + 4 ambiguous +
+# neutral = 28, matching LABELS above) rather than assumed from the emotion
+# names alone — "surprise" and "realization" read as neutral-ish in isolation
+# but the paper places both under "ambiguous", not "positive" or "negative".
+VALENCE_GROUPS: dict[str, list[str]] = {
+    "positive": [
+        "admiration", "amusement", "approval", "caring", "desire",
+        "excitement", "gratitude", "joy", "love", "optimism", "pride",
+        "relief",
+    ],
+    "negative": [
+        "anger", "annoyance", "disappointment", "disapproval", "disgust",
+        "embarrassment", "fear", "grief", "nervousness", "remorse", "sadness",
+    ],
+    "ambiguous": [
+        "confusion", "curiosity", "realization", "surprise",
+    ],
+}
+
+_LABEL_VALENCE = {
+    label: group for group, labels in VALENCE_GROUPS.items() for label in labels
+}
+
+
+def valence_of(label: str) -> str:
+    """Sentiment group for a GoEmotions label, per the paper's own clustering.
+
+    Returns ``""`` for ``neutral`` or an unrecognised/blank label — callers
+    should treat that as "no valence to report", not as a fourth group.
+    """
+    return _LABEL_VALENCE.get(label, "")
+
 
 @dataclass
 class EmotionResult:

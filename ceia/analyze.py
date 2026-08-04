@@ -114,6 +114,7 @@ def analyse(
     )
     eventstudy.attach_headlines(incidents, items)
     correlation = eventstudy.sentiment_return_correlation(table)
+    emotion_summary = eventstudy.emotion_valence_summary(table)
 
     return Analysis(
         config=config,
@@ -125,6 +126,7 @@ def analyse(
                                    price_meta.get("ar_scale_source", "")),
         unattributed=align.unattributed(items),
         correlation=correlation,
+        emotion_summary=emotion_summary,
     )
 
 
@@ -157,6 +159,18 @@ def _print(analysis: Analysis) -> None:
               f"(R2={corr['r_squared']:.3f}, n={corr['n']}) — {corr['note']}")
     elif corr:
         print(f"Sentiment/return correlation: not computed — {corr.get('note', '')}")
+
+    groups = analysis.emotion_summary.get("groups") or {}
+    if groups:
+        print("Emotion valence vs abnormal return (GoEmotions, descriptive only):")
+        for valence in ("positive", "negative", "ambiguous"):
+            g = groups.get(valence)
+            if not g:
+                continue
+            print(f"   {valence:<10} n={g['n_days']:<3} "
+                  f"mean abnormal={g['mean_abnormal_return'] * 100:+.2f}%  "
+                  f"mean sentiment={g['mean_weighted_sentiment']:+.2f}  "
+                  f"({', '.join(g['labels_seen'])})")
 
     if analysis.daily.empty:
         print("\nNo trading days in the analysis window.")
