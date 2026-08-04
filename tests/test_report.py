@@ -293,6 +293,24 @@ class TestHtmlReport:
         html = build_html(make_analysis())
         assert "<svg" in html  # got all the way through without raising
 
+    def test_robustness_column_renders_when_present(self):
+        incident = make_incident(day=date(2023, 1, 25))
+        analysis = make_analysis(incidents=[incident])
+        analysis.robustness = {
+            "n_combos": 9,
+            "days": {"2023-01-25": {"flagged_in": 9, "of": 9, "fraction": 1.0}},
+            "note": "each candidate day's flagging test re-run across 9 combinations...",
+        }
+        html = build_html(analysis)
+        assert "9/9" in html
+        assert "Threshold robustness" in html
+
+    def test_missing_robustness_does_not_crash(self):
+        """FakeAnalysis in these tests has no robustness attribute at all;
+        getattr()'s default must keep the report rendering, not KeyError."""
+        html = build_html(make_analysis())
+        assert "<svg" in html
+
     def test_limitations_appear_before_findings(self):
         html = build_html(make_analysis())
         warning = html.index("What this report is, and is not")

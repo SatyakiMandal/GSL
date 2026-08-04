@@ -20,6 +20,7 @@ from ceia.eventstudy import (  # noqa: E402
     caveats,
     emotion_valence_summary,
     rank_incidents,
+    robustness_check,
     sentiment_return_correlation,
 )
 from ceia.extract import IST  # noqa: E402
@@ -331,6 +332,70 @@ class TestRanking:
         assert top.car["p_value"] < 0.1
         assert top.car["n"] > 0
         assert len(incidents[0].headlines) <= 3
+
+
+class TestRobustnessCheck:
+    def _setup(self):
+        days = [date(2023, 1, d) for d in (23, 24, 25, 27, 30)]
+        frame = price_frame({
+            days[0]: (0.005, 0.004), days[1]: (0.002, 0.003),
+            days[2]: (-0.20, -0.01), days[3]: (-0.02, -0.015), days[4]: (0.01, 0.005),
+        })
+        news = [item(days[2], -0.9, url=f"n{i}", event="regulatory") for i in range(6)]
+        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
+        return frame, table, days
+
+    def test_a_strongly_flagged_day_is_robust_at_every_grid_point(self):
+        """A -20% move with 6 negative stories should clear even the
+        tightest (1.3x) threshold in the default grid, so it should be
+        flagged at all 9 combinations."""
+        frame, table, days = self._setup()
+        incidents = rank_incidents(table, frame, return_threshold=1.0)
+        result = robustness_check(table, frame, incidents, (-1, 3), 1.0, 1.0)
+        key = days[2].isoformat()
+        assert result["n_combos"] == 9
+        assert result["days"][key]["flagged_in"] == 9
+        assert result["days"][key]["fraction"] == 1.0
+
+    def test_borderline_day_is_not_robust_at_every_grid_point(self):
+        """A day that only just clears the base threshold should fail to
+        flag once the return-z threshold is tightened by the grid's 1.3x."""
+        days = [date(2023, 1, d) for d in (23, 24, 25, 27, 30)]
+        frame = price_frame({
+            days[0]: (0.005, 0.004), days[1]: (0.002, 0.003),
+            days[2]: (-0.022, -0.01), days[3]: (-0.02, -0.015), days[4]: (0.01, 0.005),
+        })
+        news = [item(days[2], -0.9, url=f"n{i}", event="regulatory") for i in range(6)]
+        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
+        base_incidents = rank_incidents(table, frame, return_threshold=1.0)
+        assert base_incidents, "should just barely flag at the base threshold"
+        z = base_incidents[0].abnormal_return_z
+        assert 1.0 <= abs(z) < 1.3, f"test needs a z between 1.0 and 1.3, got {z}"
+        result = robustness_check(table, frame, base_incidents, (-1, 3), 1.0, 1.0)
+        key = days[2].isoformat()
+        assert result["days"][key]["flagged_in"] < result["n_combos"]
+
+    def test_no_incidents_returns_empty_result(self):
+        frame, table, days = self._setup()
+        result = robustness_check(table, frame, [], (-1, 3), 1.0, 1.0)
+        assert result["n_combos"] == 0
+        assert result["days"] == {}
+
+    def test_base_combination_always_included_in_the_grid(self):
+        """1.0x/1.0x is one of the 9 grid points, so a base incident is
+        guaranteed at least 1 hit - it cannot come back as 0/9."""
+        frame, table, days = self._setup()
+        incidents = rank_incidents(table, frame, return_threshold=1.0)
+        result = robustness_check(table, frame, incidents, (-1, 3), 1.0, 1.0)
+        for entry in result["days"].values():
+            assert entry["flagged_in"] >= 1
+
+    def test_custom_multipliers_change_the_grid_size(self):
+        frame, table, days = self._setup()
+        incidents = rank_incidents(table, frame, return_threshold=1.0)
+        result = robustness_check(table, frame, incidents, (-1, 3), 1.0, 1.0,
+                                  multipliers=(0.5, 1.0))
+        assert result["n_combos"] == 4
 
 
 class TestCaveats:

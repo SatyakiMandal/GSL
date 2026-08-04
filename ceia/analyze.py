@@ -46,6 +46,7 @@ class Analysis:
     emotion_summary: dict = field(default_factory=dict)
     secondary_daily: pd.DataFrame | None = None
     secondary_meta: dict = field(default_factory=dict)
+    robustness: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         table = self.daily.reset_index()
@@ -68,6 +69,7 @@ class Analysis:
             "sentiment_return_correlation": self.correlation,
             "emotion_return_summary": self.emotion_summary,
             "secondary_benchmark": secondary,
+            "threshold_robustness": self.robustness,
             "unattributed_items": [
                 {"url": i.url, "source": i.source, "headline": i.headline,
                  "reason": i.timestamp_confidence}
@@ -125,6 +127,10 @@ def analyse(
     eventstudy.attach_headlines(incidents, items)
     correlation = eventstudy.sentiment_return_correlation(table)
     emotion_summary = eventstudy.emotion_valence_summary(table)
+    robustness = eventstudy.robustness_check(
+        table, frame, incidents, config.event_window,
+        coverage_threshold, return_threshold,
+    )
 
     secondary_daily = None
     secondary_meta: dict = {}
@@ -186,6 +192,7 @@ def analyse(
         emotion_summary=emotion_summary,
         secondary_daily=secondary_daily,
         secondary_meta=secondary_meta,
+        robustness=robustness,
     )
 
 
@@ -295,6 +302,10 @@ def _print(analysis: Analysis) -> None:
                 print(f"   permutation p-value: not computed - {car['p_value_note']}")
             if car.get("note"):
                 print(f"   note: {car['note']}")
+        robust = analysis.robustness.get("days", {}).get(incident.day.isoformat())
+        if robust:
+            print(f"   robustness: flagged in {robust['flagged_in']}/{robust['of']} "
+                  f"threshold combinations tried")
         for headline in incident.headlines:
             print(f"     - {headline[:100]}")
 

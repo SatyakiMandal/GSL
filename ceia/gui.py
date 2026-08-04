@@ -375,6 +375,13 @@ if submitted:
                 "history with as extreme a CAR as this one. Valid only for "
                 "this run; not a claim it would replicate elsewhere."
             )
+        top_robust = (analysis.robustness.get("days") or {}).get(top.day.isoformat())
+        if top_robust:
+            st.caption(
+                f"Threshold robustness: flagged in **{top_robust['flagged_in']}/"
+                f"{top_robust['of']}** coverage/return z-threshold combinations "
+                "tried around the configured values."
+            )
 
     corr = analysis.correlation
     if corr.get("r") is not None:

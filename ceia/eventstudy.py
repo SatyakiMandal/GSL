@@ -438,6 +438,79 @@ def emotion_valence_summary(table: pd.DataFrame) -> dict:
     }
 
 
+# Multiplicative grid applied to the configured coverage/return z-thresholds.
+# 1.0x is always the configured value itself, so the base incident set is
+# always one point in the grid; 0.7x/1.3x deliberately stay close to the
+# base rather than sweeping wildly, since the question this answers is "does
+# this flag survive a *plausible* choice of threshold", not "does it survive
+# an arbitrary one".
+DEFAULT_SENSITIVITY_MULTIPLIERS = (0.7, 1.0, 1.3)
+
+
+def robustness_check(
+    table: pd.DataFrame,
+    frame: pd.DataFrame,
+    base_incidents: list[Incident],
+    event_window: tuple[int, int],
+    coverage_threshold: float,
+    return_threshold: float,
+    multipliers: tuple[float, ...] = DEFAULT_SENSITIVITY_MULTIPLIERS,
+) -> dict:
+    """How much of the incident list survives a plausible change in thresholds?
+
+    The ranking score already orders candidates for attention, but it says
+    nothing about how sensitive the underlying *flagging* test is to the two
+    thresholds that drive it. A day that flags at every combination in the
+    grid is a robust candidate; a day that only flags at the loosest setting
+    is a borderline one - useful context a reader can't get from the base run
+    alone. ``event_window`` is fixed across the grid rather than varied: it
+    only changes the CAR figure attached to an already-flagged day, not
+    whether that day flags in the first place, so sweeping it would just
+    relabel the same incident set under a different heading.
+
+    Each grid cell re-runs the full flagging test (cheap: ``permutations=0``
+    skips the placebo resampling, which is not needed here - this answers a
+    different question than the CAR p-value does).
+    """
+    if not base_incidents:
+        return {"n_combos": 0, "days": {}, "note": "no incidents to check."}
+
+    grid_days: list[set[date]] = []
+    for cov_mult in multipliers:
+        for ret_mult in multipliers:
+            variant = rank_incidents(
+                table, frame, event_window=event_window,
+                coverage_threshold=coverage_threshold * cov_mult,
+                return_threshold=return_threshold * ret_mult,
+                permutations=0,
+            )
+            grid_days.append({i.day for i in variant})
+
+    n_combos = len(grid_days)
+    days: dict[str, dict] = {}
+    for incident in base_incidents:
+        hits = sum(1 for day_set in grid_days if incident.day in day_set)
+        days[incident.day.isoformat()] = {
+            "flagged_in": hits,
+            "of": n_combos,
+            "fraction": round(hits / n_combos, 3),
+        }
+
+    mult_label = "/".join(f"{m:g}x" for m in multipliers)
+    return {
+        "n_combos": n_combos,
+        "multipliers": list(multipliers),
+        "days": days,
+        "note": (f"each candidate day's flagging test re-run across "
+                f"{n_combos} combinations of coverage/return z-thresholds "
+                f"({mult_label} of the {coverage_threshold:g}/"
+                f"{return_threshold:g} configured values). A day flagged in "
+                "all combinations is robust to the exact threshold chosen; "
+                "one flagged in only the loosest combination is threshold-"
+                "sensitive - treat it with more caution."),
+    }
+
+
 def caveats(table: pd.DataFrame, incidents: list[Incident],
             model_kind: str, scale_source: str) -> list[str]:
     """The limitations this specific run has to state (PRD Section 9)."""

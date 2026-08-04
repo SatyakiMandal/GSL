@@ -203,16 +203,20 @@ def _emotion_valence_table(emotion_summary: dict) -> str:
     )
 
 
-def _incident_table(incidents: list[Incident], window: tuple[int, int]) -> str:
+def _incident_table(incidents: list[Incident], window: tuple[int, int],
+                    robustness: dict | None = None) -> str:
     if not incidents:
         return ('<p class="empty">No day combined notable coverage with an unusual '
                 "abnormal return at the configured thresholds.</p>")
+    robust_days = (robustness or {}).get("days") or {}
     rows = []
     for rank, inc in enumerate(incidents, 1):
         car = inc.car or {}
         car_value = car.get("car")
         t_stat = car.get("t_stat")
         p_value = car.get("p_value")
+        robust = robust_days.get(inc.day.isoformat())
+        robust_cell = (f"{robust['flagged_in']}/{robust['of']}" if robust else "—")
         rows.append(
             f"<tr><td>{rank}</td><td>{inc.day:%d %b %Y}</td>"
             f"<td class=\"{_cls(inc.abnormal_return)}\"><strong>"
@@ -224,6 +228,7 @@ def _incident_table(incidents: list[Incident], window: tuple[int, int]) -> str:
             f"{_pct(car_value) if car_value is not None else '—'}</td>"
             f"<td>{f'{t_stat:.2f}' if t_stat is not None else '—'}</td>"
             f"<td>{f'{p_value:.3f}' if p_value is not None else '—'}</td>"
+            f"<td>{robust_cell}</td>"
             f'<td class="txt">{"consistent" if inc.direction_agrees else "opposite"}</td>'
             f'<td class="txt">{escape(inc.dominant_event or "—")}</td>'
             f'<td class="txt">{escape(inc.dominant_emotion or "—")}</td></tr>'
@@ -233,6 +238,7 @@ def _incident_table(incidents: list[Incident], window: tuple[int, int]) -> str:
         '<div class="scroll"><table><thead><tr>'
         "<th>#</th><th>Date</th><th>Abnormal return</th><th>z</th><th>Items</th>"
         f"<th>Tone</th><th>CAR[{before},+{after}]</th><th>t</th><th>p**</th>"
+        '<th>Robust***</th>'
         '<th class="txt">Tone vs price</th><th class="txt">Main topic</th>'
         '<th class="txt">Emotion*</th>'
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
@@ -323,6 +329,8 @@ def build_html(analysis) -> str:
     if secondary_ticker:
         daily_display = daily.join(secondary_daily[["secondary_abnormal_return"]])
 
+    robustness = getattr(analysis, "robustness", {}) or {}
+
     stats = "".join([
         _stat("Trading days", str(len(daily))),
         _stat("News items", str(news_count)),
@@ -407,8 +415,10 @@ exact date and value.</p>
 The ranking orders days for attention; it is not a significance test.
 <em>*Emotion</em> is a secondary, general-purpose signal (GoEmotions) read
 alongside tone, not a substitute for it. <em>**p</em> is a permutation-test
-p-value for the CAR — see Method and provenance below for both.</p>
-{_incident_table(incidents, config.event_window)}
+p-value for the CAR. <em>***Robust</em> counts how many of a small grid of
+threshold combinations still flag this day — see Method and provenance below
+for all three.</p>
+{_incident_table(incidents, config.event_window, robustness)}
 {_incident_sections(incidents, safe_company, safe_benchmark, config.event_window)}
 
 <h2>Daily detail</h2>
@@ -459,6 +469,7 @@ treat it as a single additional lens on the same daily table above, not as
 proof that sentiment predicts price.</p>
 {f'<p><strong>Emotion valence vs return.</strong> {escape(emotion_summary.get("note", ""))}</p>{emotion_table}' if emotion_table else ''}
 {f'<p><strong>Secondary benchmark ({escape(secondary_ticker)}).</strong> {escape(secondary_meta.get("note", ""))}</p>' if secondary_ticker else (f'<p><strong>Secondary benchmark.</strong> {escape(secondary_meta["note"])}</p>' if secondary_meta.get("note") else '')}
+{f'<p><strong>Threshold robustness.</strong> {escape(robustness.get("note", ""))}</p>' if robustness.get("days") else ''}
 </div>
 
 <h3>Source availability</h3>

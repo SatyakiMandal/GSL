@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-317 tests
+324 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -113,7 +113,7 @@ FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
 front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 317 tests, no network required
+pytest -q     # 324 tests, no network required
 ```
 
 ### Run the spike
@@ -519,6 +519,36 @@ degrades to "not computed" with a stated reason rather than a wrong number
 when the price series is too short to draw enough non-overlapping windows.
 Surfaced as a `p` column next to `t` in the CLI, HTML report and GUI.
 
+### Sensitivity: does a flag survive a different threshold?
+
+The ranking score orders candidates for attention, but on its own it says
+nothing about how sensitive the underlying *flagging test* is to
+`--coverage-z`/`--return-z` — the two thresholds a day has to clear to
+become a candidate at all. A day that only flags because the thresholds
+happen to be set exactly where they are is a weaker finding than one that
+flags under a wide range of plausible settings, and the base run alone
+can't tell a reader which is which.
+
+`ceia/eventstudy.py:robustness_check` re-runs the same flagging test across
+a 3×3 grid — each threshold at 0.7×, 1.0× and 1.3× its configured value (9
+combinations, always including the exact base run) — and reports, per
+candidate day, how many of those 9 combinations still flag it. The grid
+only varies the two z-thresholds, not the event window: the event window
+changes the CAR figure attached to an already-flagged day, but never
+changes whether that day flags in the first place, so sweeping it would
+just relabel the same incident set under a different heading, not test
+anything.
+
+Cheap to compute: each grid cell skips the CAR permutation test
+(`permutations=0`), since robustness and CAR significance are different
+questions and running placebo resampling nine times over would be pure
+waste. Confirmed on the Adani/Hindenburg corpus: the two strongly-evidenced
+incidents (25 and 27 January 2023) come back robust at 9/9, while a
+smaller move flagged mainly through the thin-coverage-baseline relaxation
+came back at only 6/9 — exactly the "solid vs. borderline" distinction this
+is meant to surface. Surfaced as a `Robust` column in the CLI, HTML report
+and GUI.
+
 ### Complementary signals: correlation and volume
 
 Two additions read the same daily table from a different angle, both
@@ -616,9 +646,11 @@ python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
    the top panel matching their rank in the incident table below (badge #1 =
    the highest-ranked candidate); every bar has a hover tooltip with its exact
    date and value.
-4. **Ranked incident table** with abnormal return, z, CAR, t, and a
+4. **Ranked incident table** with abnormal return, z, CAR, t, a
    permutation-test p-value for CAR (see
-   [CAR significance](#car-significance-from-a-caveated-t-stat-to-a-permutation-test)).
+   [CAR significance](#car-significance-from-a-caveated-t-stat-to-a-permutation-test)),
+   and a threshold-robustness fraction (see
+   [Sensitivity](#sensitivity-does-a-flag-survive-a-different-threshold)).
 5. **Per-incident narrative** — two to four paragraphs each, plus the source
    headlines behind the flag.
 6. **Daily detail table**, flagged rows highlighted, with a `Volume` column
