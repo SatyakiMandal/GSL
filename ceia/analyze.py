@@ -363,6 +363,10 @@ def main() -> None:
     parser.add_argument("--out", default="out/analysis.json")
     parser.add_argument("--html", default="out/report.html",
                         help="Standalone HTML report path; --html '' to skip.")
+    parser.add_argument("--pdf", default=None,
+                        help="Also render the report to this PDF path. Needs "
+                             'Playwright: pip install -e ".[pdf]" && '
+                             "playwright install chromium.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -436,6 +440,17 @@ def main() -> None:
     if args.html:
         from .report import write_report
         print(f"wrote {write_report(analysis, args.html)}")
+
+    if args.pdf:
+        from .pdf import PdfExportError, render_pdf
+        from .report import build_html
+        try:
+            print(f"wrote {render_pdf(build_html(analysis), args.pdf)}")
+        except PdfExportError as exc:
+            # The JSON/HTML outputs above already succeeded - a missing or
+            # broken PDF dependency should not turn a successful run into a
+            # failed one, just a run with one fewer output file.
+            print(f"\nPDF export skipped: {exc}")
 
 
 if __name__ == "__main__":

@@ -341,6 +341,18 @@ if submitted:
         st.error(f"{type(exc).__name__}: {exc}")
         st.stop()
 
+    # Stored so the results below survive later reruns triggered by any
+    # widget in that section (e.g. the PDF button) - a bare local variable
+    # only lives for the one rerun where the form was actually submitted;
+    # every widget click after that is a fresh script run with `submitted`
+    # back to False, which would otherwise make the whole results section
+    # (including the just-generated download) vanish back to the bare form.
+    st.session_state["analysis"] = analysis
+    st.session_state.pop("pdf_bytes", None)
+    st.session_state.pop("pdf_error", None)
+
+analysis = st.session_state.get("analysis")
+if analysis is not None:
     st.success("Done.")
 
     m1, m2, m3, m4 = st.columns(4)
@@ -413,11 +425,32 @@ if submitted:
                   f"available — {sec_meta['note']}")
 
     html_report = build_html(analysis)
-    st.download_button("Download report.html", data=html_report,
-                       file_name="report.html", mime="text/html")
-    st.download_button("Download analysis.json",
-                       data=json.dumps(analysis.to_dict(), indent=2, default=str),
-                       file_name="analysis.json", mime="application/json")
+    dl1, dl2, dl3 = st.columns(3)
+    with dl1:
+        st.download_button("Download report.html", data=html_report,
+                           file_name="report.html", mime="text/html")
+    with dl2:
+        st.download_button("Download analysis.json",
+                           data=json.dumps(analysis.to_dict(), indent=2, default=str),
+                           file_name="analysis.json", mime="application/json")
+    with dl3:
+        if st.button("Generate report.pdf"):
+            from ceia.pdf import PdfExportError, render_pdf
+            with st.spinner("Rendering PDF via headless Chromium…"):
+                try:
+                    with tempfile.TemporaryDirectory() as tmp_dir:
+                        pdf_path = render_pdf(html_report, Path(tmp_dir) / "report.pdf")
+                        st.session_state["pdf_bytes"] = pdf_path.read_bytes()
+                    st.session_state.pop("pdf_error", None)
+                except PdfExportError as exc:
+                    st.session_state["pdf_error"] = str(exc)
+                    st.session_state.pop("pdf_bytes", None)
+        if st.session_state.get("pdf_bytes"):
+            st.download_button("Download report.pdf",
+                               data=st.session_state["pdf_bytes"],
+                               file_name="report.pdf", mime="application/pdf")
+        elif st.session_state.get("pdf_error"):
+            st.error(f"PDF export unavailable: {st.session_state['pdf_error']}")
 
     st.subheader("Full report")
     st.components.v1.html(html_report, height=1400, scrolling=True)

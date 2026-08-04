@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-324 tests
+330 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -110,10 +110,12 @@ still work without installing.
 
 Lighter installs: `pip install -e .` for scraping only, `.[sentiment]` to add
 FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
-front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
+front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests, `.[pdf]` for
+PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
+`pip install`, which is why it's not in `.[all]`).
 
 ```bash
-pytest -q     # 324 tests, no network required
+pytest -q     # 330 tests, no network required
 ```
 
 ### Run the spike
@@ -681,6 +683,43 @@ scans generated narrative for causal verbs outside an explicit denial.
   markup would have been injected into the page.
 - **The "tone disagrees with price" narrative branch omitted the non-causation
   caveat** that the agreement branch carried.
+
+### PDF export
+
+`--pdf PATH` (CLI) / "Generate report.pdf" (GUI) renders the same
+self-contained HTML report to a PDF via headless Chromium
+(`ceia/pdf.py:render_pdf`, Playwright). A real browser engine was chosen over
+a pure-Python PDF library (e.g. WeasyPrint) because the report's CSS uses
+`color-mix()` for the flagged-row highlight and the charts are inline SVG
+resolving CSS custom properties against `prefers-color-scheme` — a browser
+renders both correctly without auditing which CSS features a lighter library
+does or doesn't support.
+
+The cost is a heavier, genuinely optional dependency: `pip install -e
+".[pdf]"` alone is **not** enough — Playwright also needs `playwright install
+chromium` afterward to fetch the actual browser binary, a second step none of
+this project's other extras require. That's why `pdf` is its own extra and
+deliberately left out of `.[all]`: bundling it in would silently ship a
+"PDF" button that doesn't work until a step `pip install` never mentions. If
+the dependency or the browser binary is missing, both the CLI and GUI degrade
+to a clear, one-line message rather than failing the whole run — the JSON and
+HTML outputs are unaffected either way.
+
+**A real bug the GUI wiring caught:** Streamlit reruns the entire script on
+every widget interaction, and a `st.form_submit_button`'s "was I just
+clicked" flag is only `True` on the one rerun immediately after submission.
+The whole results section — including the "Generate report.pdf" button
+itself — lived inside `if submitted:`, so clicking that button (a plain,
+separate widget) triggered a rerun where `submitted` was `False` again,
+which silently reverted the entire page back to the bare input form,
+discarding the just-computed analysis before the resulting PDF download
+button could ever appear. Confirmed live (Playwright driving the actual
+running app, not just reading the source): the results vanished on click.
+Fixed by storing the computed `Analysis` in `st.session_state` and rendering
+the results section from there rather than from a bare local variable — which
+also, as a side effect, fixed the same latent problem for the pre-existing
+"Download report.html"/"Download analysis.json" buttons, which had quietly
+had it all along.
 
 ---
 

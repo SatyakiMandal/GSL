@@ -25,7 +25,16 @@ dependencies = [
 sentiment = ["torch>=2.0", "transformers>=4.40"]
 prices = ["yfinance>=0.2.40"]
 gui = ["streamlit>=1.30"]
-dev = ["pytest>=7.4"]
+# Not folded into "all": pip install alone is not enough to make this work -
+# it also needs `playwright install chromium` afterward to fetch the browser
+# binary, which every other extra here does not require. Left opt-in so
+# `pip install -e ".[all]"` doesn't silently leave a broken PDF button behind.
+pdf = ["playwright>=1.40"]
+# pypdf is dev-only: one PDF test uses it to verify the rendered PDF's text
+# content is actually extractable, not just "a PDF-shaped file exists". That
+# test skips itself (pytest.importorskip) if pypdf isn't present, so it is
+# not required to run the suite - just to get that one test's real coverage.
+dev = ["pytest>=7.4", "pypdf>=4.0"]
 all = [
     "torch>=2.0", "transformers>=4.40", "yfinance>=0.2.40", "streamlit>=1.30",
     "pytest>=7.4",
