@@ -1,0 +1,53 @@
+# Company Event Impact Analyzer (CEIA) - Technical Breakdown
+
+This document provides a detailed breakdown of the Company Event Impact Analyzer (CEIA) based on the internal technical reference[cite: 2].
+
+## Overview and Core Philosophy
+The CEIA is a structured, Python-based analytical engine designed to line up financial press coverage of a specific company with its stock price movements[cite: 2]. Its primary goal is to flag trading days where unusual media coverage coincides with unusual, benchmark-adjusted price shifts[cite: 2]. 
+
+The system is built on three foundational commitments:
+* **Coincidence over Causation:** The tool strictly measures correlation and uses non-causal vocabulary (e.g., "coincided with," never "caused" or "triggered")[cite: 2].
+* **Benchmark-Adjusted Returns:** To prevent misinterpreting general market trends as company-specific news, every price movement is processed through an abnormal-return model[cite: 2]. 
+* **Single Case Study Focus:** The engine evaluates one company over a specific date range, explicitly stating that its findings do not carry population-level statistical weight on their own[cite: 2].
+
+---
+
+## Pipeline Architecture
+The CEIA operates within a strict five-phase dependency pipeline, accessible via a CLI or a Streamlit GUI [cite: 2].
+
+### Phase 0: Feasibility Spike
+Before full ingestion, this phase tests source reachability, `robots.txt` permissions, and historical archive depth[cite: 2]. It successfully cleared five plain-HTML news sources: Economic Times, Business Line, Financial Express, Moneycontrol, and Business Today[cite: 2]. Price data is sourced through a resilient provider chain (yfinance → Yahoo API → Alpha Vantage → local CSV)[cite: 2].
+
+### Phase 1: News Ingestion
+This stage handles discovery, extraction, and sentiment scoring[cite: 2].
+* It walks date-partitioned sitemaps concurrently while enforcing politeness and rate-limiting via per-origin locks[cite: 2].
+* A relevance pre-filter ensures large conglomerates (like the Tata group) do not generate false positives for sibling tickers[cite: 2].
+* Wire stories published across multiple outlets are deduplicated so they count as a single event[cite: 2].
+* Articles published after 15:30 IST are correctly attributed to the next viable trading day using a real exchange calendar[cite: 2].
+* Sentiment is primarily scored using FinBERT (a finance-tuned model), while GoEmotions is used as a secondary texture model to gauge specific emotions like fear or anger[cite: 2].
+
+### Phase 2: Event Study (The Analytical Core)
+This phase combines scored coverage with price data to rank candidate incident days [cite: 2]. It relies on abnormal returns to filter out market-wide noise[cite: 2].
+* **Market-Model:** Used when there is sufficient historical data, calculating abnormal returns using OLS regression: $AR = R_i - (\alpha + \beta \cdot R_m)$[cite: 2].
+* **Market-Adjusted Model:** A fallback model used when historical data is insufficient, which assumes $\beta=1$ and explicitly flags this assumption[cite: 2].
+* **Incident Flagging:** A day is flagged only if both the news coverage (volume or sentiment) and the abnormal return are statistically unusual[cite: 2].
+* **Lenses and Robustness:** The tool runs five supplementary checks, including trading volume analysis, secondary benchmarks, and a custom permutation test for Cumulative Abnormal Returns (CAR)[cite: 2]. This permutation test draws thousands of placebo windows to calculate a mathematically rigorous p-value specific to the analyzed company[cite: 2].
+
+### Phase 3: Reporting
+The pipeline generates a self-contained HTML file (with an optional Playwright-powered PDF export)[cite: 2]. 
+* It includes a limitations box, a plain-language summary narrative, and inline SVG charts[cite: 2]. 
+* The narrative generation uses mechanically constrained templates to ensure no causal verbs slip into the final report[cite: 2].
+
+### Phase 4: GUI
+A Streamlit frontend serves as a presentation layer[cite: 2]. It uses the same underlying logic as the CLI to ensure consistency [cite: 2].
+
+## Validation and Bug Hunting
+The codebase is supported by 333 tests and relies heavily on identifying "silent failures"—bugs that do not crash the system but yield incorrect or zero results[cite: 2]. 
+* **Testing Layers:** Includes pure-math unit tests, fully wired integration tests with synthetic price shocks, and real-world live validation[cite: 2].
+* **Real-World Success:** The tool was validated against the January 2023 Adani/Hindenburg event, successfully identifying the January 27 crash as its top-ranked incident[cite: 2]. 
+* **Squashed Bugs:** The development process caught and fixed several critical edge cases, such as CDATA sitemap parsing failures, trading-calendar truncation, and Streamlit thread-safety crashes[cite: 2].
+
+---
+
+## Limitations
+The documentation explicitly outlines the system's boundaries: the tool is not a trading signal generator or a backtester[cite: 2]. Every computed statistic (like the CAR p-value) is only valid for the specific run being executed, and the Reddit-trained GoEmotions model is acknowledged as a domain mismatch when applied to financial headlines[cite: 2].
