@@ -277,6 +277,22 @@ class TestHtmlReport:
         assert "@import" not in html
         assert "<script" not in html.lower(), "no scripts needed"
 
+    def test_permutation_p_value_renders_when_present(self):
+        incident = make_incident(car={
+            "car": -0.3034, "days": 5, "start": "2023-01-24", "end": "2023-01-30",
+            "t_stat": -12.84, "truncated": False, "note": "",
+            "p_value": 0.012, "n": 800, "p_value_note": "empirical p-value...",
+        })
+        html = build_html(make_analysis(incidents=[incident]))
+        assert "0.012" in html
+        assert "CAR permutation p=0.012" in html
+
+    def test_missing_p_value_key_does_not_crash(self):
+        """make_incident()'s default car dict predates the permutation test
+        and has no p_value key; .get() must degrade to a dash, not KeyError."""
+        html = build_html(make_analysis())
+        assert "<svg" in html  # got all the way through without raising
+
     def test_limitations_appear_before_findings(self):
         html = build_html(make_analysis())
         warning = html.index("What this report is, and is not")

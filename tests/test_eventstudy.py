@@ -290,6 +290,46 @@ class TestRanking:
         incidents = rank_incidents(table, frame, return_threshold=1.0)
         attach_headlines(incidents, news, limit=3)
         assert incidents[0].headlines
+
+    def test_car_dict_has_permutation_fields_even_when_series_too_short(self):
+        """The 5-day fixture here is far too short for a real permutation
+        test - it must degrade to p_value=None with a note, not crash or
+        silently omit the keys."""
+        frame, table, news, days = self._setup()
+        top = rank_incidents(table, frame, return_threshold=1.0)[0]
+        assert "p_value" in top.car
+        assert top.car["p_value"] is None
+        assert top.car.get("p_value_note")
+
+    def test_permutations_zero_disables_the_test(self):
+        frame, table, news, days = self._setup()
+        top = rank_incidents(table, frame, return_threshold=1.0, permutations=0)[0]
+        assert top.car["p_value"] is None
+        assert "disabled" in top.car["p_value_note"]
+
+    def test_permutation_p_value_computed_on_a_long_enough_series(self):
+        """A 120-day series with one big idiosyncratic shock gives the
+        permutation test enough non-flagged windows to actually run."""
+        rng = np.random.default_rng(3)
+        base = date(2022, 9, 1)
+        days = [base + pd.Timedelta(days=i) for i in range(160)]
+        days = [d for d in days if d.weekday() < 5][:120]
+        market = rng.normal(0.0002, 0.006, len(days))
+        company = list(market + rng.normal(0, 0.003, len(days)))
+        shock_idx = 100
+        company[shock_idx] -= 0.20
+        returns_by_day = {d: (c, m) for d, c, m in zip(days, company, market)}
+        frame = price_frame(returns_by_day)
+        shock_day = days[shock_idx]
+        news = [item(shock_day, -0.9, url=f"s{i}", event="regulatory") for i in range(4)]
+        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
+        incidents = rank_incidents(table, frame, return_threshold=1.0)
+        assert incidents, "the shock day should flag"
+        top = incidents[0]
+        assert top.day == shock_day
+        assert top.car["p_value"] is not None
+        assert top.car["p_value"] < 0.1
+        assert top.car["n"] > 0
         assert len(incidents[0].headlines) <= 3
 
 

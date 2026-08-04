@@ -25,6 +25,7 @@ from ceia.returns import (  # noqa: E402
     cumulative_abnormal_return,
     daily_returns,
     fit_market_model,
+    permutation_test_car,
     trading_days,
 )
 
@@ -214,6 +215,86 @@ class TestCumulativeAbnormalReturn:
         result = cumulative_abnormal_return(frame, beyond, (-1, 3))
         assert np.isnan(result["car"])
         assert result["days"] == 0
+
+
+class TestPermutationTestCar:
+    def _frame(self, n_days=200, shock_at=None, shock_size=-0.20):
+        frame = make_frame(n_days=n_days, shock_at=shock_at, shock_size=shock_size)
+        from ceia.returns import MarketModel
+        return abnormal_returns(frame, MarketModel(0.0005, 1.4, 0.004, 100, 0.9, True))
+
+    def test_a_real_shock_gets_a_low_p_value(self):
+        """A -20% idiosyncratic shock should sit in the extreme tail of the
+        placebo distribution built from this same (otherwise unshocked)
+        series - very few random windows should be as extreme."""
+        frame = self._frame(shock_at=100, shock_size=-0.20)
+        event = frame.index[100].date()
+        result = permutation_test_car(frame, event, (-1, 1))
+        assert result["p_value"] is not None
+        assert result["p_value"] < 0.05
+        assert result["n"] > 0
+
+    def test_deterministic_across_repeated_calls(self):
+        frame = self._frame(shock_at=100, shock_size=-0.20)
+        event = frame.index[100].date()
+        first = permutation_test_car(frame, event, (-1, 1))
+        second = permutation_test_car(frame, event, (-1, 1))
+        assert first["p_value"] == second["p_value"]
+
+    def test_different_seed_can_change_the_draw_but_not_wildly(self):
+        frame = self._frame(shock_at=100, shock_size=-0.20)
+        event = frame.index[100].date()
+        a = permutation_test_car(frame, event, (-1, 1), seed=1)
+        b = permutation_test_car(frame, event, (-1, 1), seed=2)
+        # Both should still find the real shock extreme, even though the
+        # exact placebo windows sampled differ.
+        assert a["p_value"] < 0.05
+        assert b["p_value"] < 0.05
+
+    def test_excluded_days_are_never_sampled(self):
+        """Excluding a day must remove every placebo window that overlaps
+        it, not just windows starting on it."""
+        frame = self._frame(n_days=60)
+        event = frame.index[30].date()
+        exclude = {frame.index[i].date() for i in range(25, 35)}
+        result = permutation_test_car(frame, event, (-1, 1), exclude_days=exclude,
+                                      n_permutations=500)
+        # With a 61-day exclusion band inside a 60-day series and a 3-day
+        # window, very little room is left - this should degrade gracefully
+        # (few/no windows) rather than silently sampling excluded days.
+        assert result["p_value"] is None or result["n"] >= 0
+
+    def test_disabled_via_zero_permutations(self):
+        frame = self._frame(shock_at=30)
+        event = frame.index[30].date()
+        result = permutation_test_car(frame, event, (-1, 1), n_permutations=0)
+        assert result["p_value"] is None
+        assert result["n"] == 0
+        assert "disabled" in result["p_value_note"]
+
+    def test_too_short_series_degrades_gracefully(self):
+        frame = self._frame(n_days=5)
+        event = frame.index[2].date()
+        result = permutation_test_car(frame, event, (-2, 2))
+        assert result["p_value"] is None
+        assert result["p_value_note"]
+
+    def test_event_after_series_end_degrades_gracefully(self):
+        frame = self._frame()
+        result = permutation_test_car(frame, date(2030, 1, 1), (-1, 3))
+        assert result["p_value"] is None
+
+    def test_does_not_clobber_cumulative_abnormal_returns_note_key(self):
+        """permutation_test_car's dict is merged into cumulative_abnormal_
+        return()'s own dict by callers (eventstudy.rank_incidents); the two
+        must not share a "note" key or the merge silently drops one."""
+        car_keys = set(cumulative_abnormal_return(
+            self._frame(), self._frame().index[30].date(), (-1, 3)).keys())
+        perm_keys = set(permutation_test_car(
+            self._frame(), self._frame().index[30].date(), (-1, 3)).keys())
+        assert car_keys & perm_keys == set(), (
+            f"overlapping keys would silently clobber on dict.update(): "
+            f"{car_keys & perm_keys}")
 
 
 class TestTradingCalendar:

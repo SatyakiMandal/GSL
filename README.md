@@ -8,7 +8,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-304 tests
+317 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -113,7 +113,7 @@ FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
 front end (see [Phase 4](#phase-4--gui)), `.[dev]` for the tests.
 
 ```bash
-pytest -q     # 304 tests, no network required
+pytest -q     # 317 tests, no network required
 ```
 
 ### Run the spike
@@ -488,6 +488,37 @@ fitted `alpha`/`beta`/`R²` on success or the exact observation count on
 fallback — the same numbers that were already being computed and thrown into
 `model_note`, just surfaced live instead of only on request.
 
+### CAR significance: from a caveated t-stat to a permutation test
+
+Every CAR the tool prints has always shipped with a `t` column and a
+disclaimer next to it: the t-stat assumes independent, normally distributed
+abnormal returns over a large sample, which a single company's own handful
+of trading days does not provide. That disclaimer was accurate but not
+useful — it told a reader the number was unreliable without giving them
+anything better.
+
+`ceia/returns.py:permutation_test_car` replaces "trust me, it's probably
+fine" with an empirical answer that doesn't need the assumption: draw many
+random same-length windows from this company's own abnormal-return series —
+excluding every other day already flagged as a candidate incident, so a
+real event can't leak into what's supposed to be the "nothing happening"
+null distribution — and report what fraction of those placebo CARs are at
+least as extreme as the real one. That fraction *is* a p-value, by
+construction, for this specific company, series and window length. It is
+still not proof the pattern would replicate on another company or another
+year — the whole exercise runs on data from one company — but it does not
+inherit the independence assumption `t` does, and it says so in the report
+alongside it rather than replacing it outright.
+
+Practical details: 2000 placebo draws by default (`--permutations`, GUI
+"CAR permutation-test draws"; `0` disables it), deterministic (fixed seed —
+re-running the same analysis reproduces the same p-value, the same
+guarantee the rest of this pipeline holds elsewhere, e.g. the
+`dominant_emotion`/`dominant_event` tie-break in `eventstudy.py`), and it
+degrades to "not computed" with a stated reason rather than a wrong number
+when the price series is too short to draw enough non-overlapping windows.
+Surfaced as a `p` column next to `t` in the CLI, HTML report and GUI.
+
 ### Complementary signals: correlation and volume
 
 Two additions read the same daily table from a different angle, both
@@ -585,7 +616,9 @@ python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
    the top panel matching their rank in the incident table below (badge #1 =
    the highest-ranked candidate); every bar has a hover tooltip with its exact
    date and value.
-4. **Ranked incident table** with abnormal return, z, CAR and t.
+4. **Ranked incident table** with abnormal return, z, CAR, t, and a
+   permutation-test p-value for CAR (see
+   [CAR significance](#car-significance-from-a-caveated-t-stat-to-a-permutation-test)).
 5. **Per-incident narrative** — two to four paragraphs each, plus the source
    headlines behind the flag.
 6. **Daily detail table**, flagged rows highlighted, with a `Volume` column

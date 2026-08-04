@@ -43,7 +43,7 @@ import streamlit as st
 # checkout, matching how `python -m ceia.ingest` needs no install either.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ceia import ingest  # noqa: E402
+from ceia import eventstudy, ingest, returns  # noqa: E402
 from ceia.analyze import Analysis, analyse, load_news_from_file  # noqa: E402
 from ceia.fetcher import DEFAULT_USER_AGENT, Fetcher  # noqa: E402
 from ceia.models import RunConfig  # noqa: E402
@@ -132,7 +132,10 @@ def _price_providers(ticker: str, benchmark: str, api_key: str,
 
 def _run_analysis(config: RunConfig, source_mode: str, limit: int | None,
                   skip_sentiment: bool, skip_emotion: bool,
-                  api_key: str, ticker_csv, benchmark_csv, workers: int = 8) -> Analysis:
+                  api_key: str, ticker_csv, benchmark_csv, workers: int = 8,
+                  coverage_threshold: float = eventstudy.DEFAULT_COVERAGE_Z,
+                  return_threshold: float = eventstudy.DEFAULT_RETURN_Z,
+                  permutations: int = returns.DEFAULT_PERMUTATIONS) -> Analysis:
     if source_mode == "Bundled Adani corpus (instant, no scraping)":
         if not BUNDLED_CORPUS.exists():
             raise FileNotFoundError(f"{BUNDLED_CORPUS} is missing from this checkout")
@@ -180,7 +183,11 @@ def _run_analysis(config: RunConfig, source_mode: str, limit: int | None,
 
     providers = _price_providers(config.ticker, config.benchmark, api_key,
                                  ticker_csv, benchmark_csv)
-    return _run_with_live_log(analyse, config, items, news_meta, providers=providers)
+    return _run_with_live_log(
+        analyse, config, items, news_meta, providers=providers,
+        coverage_threshold=coverage_threshold, return_threshold=return_threshold,
+        permutations=permutations,
+    )
 
 
 # ------------------------------------------------------------------------ UI
@@ -273,6 +280,14 @@ with st.form("run_config"):
                  "sites' fetches overlap instead of queueing behind each "
                  "other.",
         )
+        permutations = st.number_input(
+            "CAR permutation-test draws (0 = disable)", value=2000, min_value=0,
+            step=100,
+            help="Placebo windows drawn per candidate day to compute an "
+                 "empirical p-value for its CAR, as an alternative to the "
+                 "t-stat (which assumes a large, independent sample this "
+                 "tool does not have). Deterministic for a given value.",
+        )
         skip_sentiment = st.checkbox("Skip FinBERT sentiment (no model download)")
         skip_emotion = st.checkbox("Skip GoEmotions (no model download)")
 
@@ -312,7 +327,8 @@ if submitted:
                 config, source_mode, limit=int(limit) or None,
                 skip_sentiment=skip_sentiment, skip_emotion=skip_emotion,
                 api_key=api_key, ticker_csv=ticker_csv, benchmark_csv=benchmark_csv,
-                workers=int(workers),
+                workers=int(workers), coverage_threshold=coverage_z,
+                return_threshold=return_z, permutations=int(permutations),
             )
     except PriceError as exc:
         st.error(
@@ -350,6 +366,14 @@ if submitted:
             st.caption(
                 f"Volume: {top.volume:,.0f}{volume_z_part} — a corroborating "
                 "signal, not part of the flagging test."
+            )
+        top_p = (top.car or {}).get("p_value")
+        if top_p is not None:
+            st.caption(
+                f"CAR permutation p-value: **{top_p:.3f}** — the fraction of "
+                "random same-length windows in this company's own price "
+                "history with as extreme a CAR as this one. Valid only for "
+                "this run; not a claim it would replicate elsewhere."
             )
 
     corr = analysis.correlation

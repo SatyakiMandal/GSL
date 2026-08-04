@@ -32,7 +32,7 @@ import pandas as pd
 from .dedupe import cluster_sizes
 from .emotion import valence_of
 from .models import NewsItem
-from .returns import cumulative_abnormal_return
+from .returns import DEFAULT_PERMUTATIONS, cumulative_abnormal_return, permutation_test_car
 
 log = logging.getLogger(__name__)
 
@@ -238,6 +238,7 @@ def rank_incidents(
     coverage_threshold: float = DEFAULT_COVERAGE_Z,
     return_threshold: float = DEFAULT_RETURN_Z,
     top_n: int | None = None,
+    permutations: int = DEFAULT_PERMUTATIONS,
 ) -> list[Incident]:
     """Flag and rank candidate incident days."""
     incidents: list[Incident] = []
@@ -253,16 +254,26 @@ def rank_incidents(
     days_with_news = int((table["unique_count"] > 0).sum())
     thin_baseline = days_with_news < MIN_DAYS_FOR_BASELINE
 
-    for day, row in table.iterrows():
+    def _is_candidate(row) -> bool:
         if row["unique_count"] == 0:
-            continue
+            return False
         if thin_baseline:
             coverage_unusual = True
         else:
             coverage_unusual = (row["coverage_z"] >= coverage_threshold
                                 or abs(row["sentiment_z"]) >= coverage_threshold)
         return_unusual = abs(row["abnormal_return_z"]) >= return_threshold
-        if not (coverage_unusual and return_unusual):
+        return coverage_unusual and return_unusual
+
+    # Computed up front so the permutation test below can exclude *every*
+    # flagged day from its null distribution, not just the one currently
+    # being scored - drawing a placebo window from another real event would
+    # bias the null toward looking more "normal-move-sized" than it is,
+    # understating how extreme the real one is.
+    candidate_days = {day for day, row in table.iterrows() if _is_candidate(row)}
+
+    for day, row in table.iterrows():
+        if day not in candidate_days:
             continue
 
         # Does the price move the way the coverage's tone would suggest? A
@@ -277,6 +288,12 @@ def rank_incidents(
                  * (1 + abs(sentiment)))
         if agrees:
             score *= 1.25  # Direction agreement makes a candidate more legible.
+
+        car = cumulative_abnormal_return(frame, day, event_window)
+        car.update(permutation_test_car(
+            frame, day, event_window, exclude_days=candidate_days,
+            n_permutations=permutations,
+        ))
 
         incidents.append(Incident(
             day=day,
@@ -294,7 +311,7 @@ def rank_incidents(
             volume_z=float(row["volume_z"]),
             score=float(score),
             direction_agrees=agrees,
-            car=cumulative_abnormal_return(frame, day, event_window),
+            car=car,
             sources=str(row["sources"]).split(",") if row["sources"] else [],
         ))
 

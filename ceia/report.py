@@ -212,6 +212,7 @@ def _incident_table(incidents: list[Incident], window: tuple[int, int]) -> str:
         car = inc.car or {}
         car_value = car.get("car")
         t_stat = car.get("t_stat")
+        p_value = car.get("p_value")
         rows.append(
             f"<tr><td>{rank}</td><td>{inc.day:%d %b %Y}</td>"
             f"<td class=\"{_cls(inc.abnormal_return)}\"><strong>"
@@ -222,6 +223,7 @@ def _incident_table(incidents: list[Incident], window: tuple[int, int]) -> str:
             f"<td class=\"{_cls(car_value or 0)}\">"
             f"{_pct(car_value) if car_value is not None else '—'}</td>"
             f"<td>{f'{t_stat:.2f}' if t_stat is not None else '—'}</td>"
+            f"<td>{f'{p_value:.3f}' if p_value is not None else '—'}</td>"
             f'<td class="txt">{"consistent" if inc.direction_agrees else "opposite"}</td>'
             f'<td class="txt">{escape(inc.dominant_event or "—")}</td>'
             f'<td class="txt">{escape(inc.dominant_emotion or "—")}</td></tr>'
@@ -230,7 +232,7 @@ def _incident_table(incidents: list[Incident], window: tuple[int, int]) -> str:
     return (
         '<div class="scroll"><table><thead><tr>'
         "<th>#</th><th>Date</th><th>Abnormal return</th><th>z</th><th>Items</th>"
-        f"<th>Tone</th><th>CAR[{before},+{after}]</th><th>t</th>"
+        f"<th>Tone</th><th>CAR[{before},+{after}]</th><th>t</th><th>p**</th>"
         '<th class="txt">Tone vs price</th><th class="txt">Main topic</th>'
         '<th class="txt">Emotion*</th>'
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
@@ -262,6 +264,7 @@ def _incident_sections(incidents: list[Incident], company: str, benchmark: str,
                 f'<p class="note">Volume: {inc.volume:,.0f}{volume_z_part} — a '
                 "corroborating signal, not part of the flagging test.</p>"
             )
+        p_value = (inc.car or {}).get("p_value")
         blocks.append(
             f'<div class="incident"><h3><span class="rank">#{rank}</span>'
             f"{inc.day:%d %B %Y}</h3>"
@@ -271,6 +274,8 @@ def _incident_sections(incidents: list[Incident], company: str, benchmark: str,
             f'<span class="tag">{escape(inc.dominant_event or "other")}</span>'
             + (f'<span class="tag">emotion: {escape(inc.dominant_emotion)}</span>'
                if inc.dominant_emotion else "")
+            + (f'<span class="tag">CAR permutation p={p_value:.3f}</span>'
+               if p_value is not None else "")
             + "</div>"
             f"{paragraphs}{volume_note}{source_block}</div>"
         )
@@ -401,7 +406,8 @@ exact date and value.</p>
 <p>Ranked by the combination of an unusual abnormal return and notable coverage.
 The ranking orders days for attention; it is not a significance test.
 <em>*Emotion</em> is a secondary, general-purpose signal (GoEmotions) read
-alongside tone, not a substitute for it — see Method and provenance below.</p>
+alongside tone, not a substitute for it. <em>**p</em> is a permutation-test
+p-value for the CAR — see Method and provenance below for both.</p>
 {_incident_table(incidents, config.event_window)}
 {_incident_sections(incidents, safe_company, safe_benchmark, config.event_window)}
 
@@ -418,6 +424,18 @@ Prices came from <code>{escape(str(price.get('company_provider', '?')))}</code>
 (company) and <code>{escape(str(price.get('benchmark_provider', '?')))}</code>
 (benchmark). Abnormal returns are standardised against the
 {escape(str(price.get('ar_scale_source', 'unknown scale')))}.</p>
+<p><strong>CAR significance.</strong> The <code>t</code> column next to CAR
+assumes independent, normally distributed abnormal returns over a large
+sample — an assumption a single company's own handful of trading days does
+not meet, so it is printed only as the conventional figure, not a validated
+one. The <code>p</code> column is a permutation-test alternative that does
+not need that assumption: many random same-length windows are drawn from
+this company's own abnormal-return series (excluding every other flagged
+day, so the null is not contaminated by real events), and <code>p</code> is
+the fraction of those placebo CARs at least as extreme as the real one. It
+is still only valid for this one run on this one company — it says nothing
+about whether the pattern would replicate elsewhere — but it does not
+inherit the independence assumption <code>t</code> does.</p>
 <p><strong>Timestamp alignment.</strong> An item published after the 15:30 IST close is
 attributed to the <em>next</em> trading day, since it could not have moved that day's
 close. {news_stats.get('after_close', 0)} of the collected items fell after the close.</p>

@@ -102,6 +102,7 @@ def analyse(
     coverage_threshold: float = eventstudy.DEFAULT_COVERAGE_Z,
     return_threshold: float = eventstudy.DEFAULT_RETURN_Z,
     providers=None,
+    permutations: int = returns.DEFAULT_PERMUTATIONS,
 ) -> Analysis:
     frame, model, price_meta = returns.build(
         config.ticker, config.benchmark, config.start, config.end,
@@ -119,6 +120,7 @@ def analyse(
     incidents = eventstudy.rank_incidents(
         table, frame, event_window=config.event_window,
         coverage_threshold=coverage_threshold, return_threshold=return_threshold,
+        permutations=permutations,
     )
     eventstudy.attach_headlines(incidents, items)
     correlation = eventstudy.sentiment_return_correlation(table)
@@ -284,6 +286,13 @@ def _print(analysis: Analysis) -> None:
                   f"{car['car'] * 100:+.2f}% over {car['days']} trading days "
                   f"({car['start']} to {car['end']})"
                   + (f", t={t:.2f}" if t is not None else ""))
+            if car.get("p_value") is not None:
+                print(f"   permutation p-value: {car['p_value']:.4f} "
+                      f"(n={car['n']} placebo windows) - the fraction of "
+                      "random same-length windows in this company's own "
+                      "history with as extreme a CAR")
+            elif car.get("p_value_note"):
+                print(f"   permutation p-value: not computed - {car['p_value_note']}")
             if car.get("note"):
                 print(f"   note: {car['note']}")
         for headline in incident.headlines:
@@ -318,6 +327,9 @@ def main() -> None:
     parser.add_argument("--lead-in-days", type=int, default=200)
     parser.add_argument("--coverage-z", type=float, default=eventstudy.DEFAULT_COVERAGE_Z)
     parser.add_argument("--return-z", type=float, default=eventstudy.DEFAULT_RETURN_Z)
+    parser.add_argument("--permutations", type=int, default=returns.DEFAULT_PERMUTATIONS,
+                        help="Placebo windows drawn per incident for the CAR "
+                             "permutation-test p-value (0 disables it).")
     parser.add_argument("--min-relevance", type=float, default=0.35)
     parser.add_argument("--limit", type=int, default=None,
                         help="Cap articles fetched (live scraping only), evenly "
@@ -394,7 +406,7 @@ def main() -> None:
         analysis = analyse(
             config, items, news_meta, lead_in_days=args.lead_in_days,
             coverage_threshold=args.coverage_z, return_threshold=args.return_z,
-            providers=providers,
+            providers=providers, permutations=args.permutations,
         )
     except PriceError as exc:
         print(f"\nPrice data unavailable: {exc}")

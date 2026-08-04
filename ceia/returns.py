@@ -271,6 +271,97 @@ def build(
     return frame, model, metadata
 
 
+# Default draws for the permutation test below. 2000 is enough for a stable
+# empirical p-value to 2-3 significant figures while staying fast even on a
+# multi-year price series; the function itself uses fewer when the series
+# does not offer that many non-overlapping placebo windows.
+DEFAULT_PERMUTATIONS = 2000
+
+
+def permutation_test_car(
+    frame: pd.DataFrame,
+    event_day: date,
+    window: tuple[int, int],
+    exclude_days: set[date] = frozenset(),
+    n_permutations: int = DEFAULT_PERMUTATIONS,
+    seed: int = 42,
+) -> dict:
+    """Empirical p-value for a CAR via placebo (pseudo-event) resampling.
+
+    The t-stat next to CAR assumes independent, normally distributed abnormal
+    returns spanning a large sample - an assumption a single company's own
+    handful of trading days does not meet, and every place that t-stat is
+    printed says so. This does not fix that assumption; it sidesteps it:
+    draw many random same-length windows from this same abnormal-return
+    series - excluding any day already flagged as a candidate, so the null
+    distribution is not contaminated by the very events being tested - and
+    ask what fraction of those placebo CARs are at least as extreme (two-
+    sided) as the real one. That fraction *is* the p-value, by construction,
+    for this specific company, series and window length - no distributional
+    assumption required, at the cost of only being valid for this one run
+    (it says nothing about whether the effect would replicate elsewhere).
+
+    Deterministic by default (fixed seed): re-running the same analysis
+    reproduces the same p-value, matching the reproducibility the rest of
+    this pipeline works hard for (see the dominant_emotion/dominant_event
+    tie-break note in ``eventstudy.py``).
+    """
+    if n_permutations <= 0:
+        return {"p_value": None, "n": 0, "p_value_note": "permutation test disabled."}
+
+    # Note the "p_value_note" key name rather than "note": the caller merges
+    # this dict into cumulative_abnormal_return()'s own result, which already
+    # has a "note" key (e.g. "window truncated..."); a same-named key here
+    # would silently clobber it rather than error, exactly the kind of quiet
+    # bug this project has repeatedly hunted down elsewhere.
+    real = cumulative_abnormal_return(frame, event_day, window)
+    real_car = real.get("car")
+    days_span = real.get("days") or 0
+    if real_car is None or not np.isfinite(real_car) or days_span < 1:
+        return {"p_value": None, "n": 0,
+                "p_value_note": "actual CAR unavailable - nothing to test against."}
+
+    usable = frame.dropna(subset=["abnormal_return"])
+    ar = usable["abnormal_return"].to_numpy()
+    if len(ar) < days_span + 1:
+        return {"p_value": None, "n": 0,
+                "p_value_note": (f"only {len(ar)} usable trading day(s) in the "
+                                f"series - too few to draw {days_span}-day "
+                                "placebo windows.")}
+
+    excluded_positions = {i for i, ts in enumerate(usable.index)
+                          if ts.date() in exclude_days}
+    max_start = len(ar) - days_span
+    candidates = [
+        s for s in range(max_start + 1)
+        if not any(p in excluded_positions for p in range(s, s + days_span))
+    ]
+    if len(candidates) < 10:
+        return {"p_value": None, "n": 0,
+                "p_value_note": ("too few non-flagged windows available in "
+                                 "this price series to build a null "
+                                 "distribution.")}
+
+    rng = np.random.default_rng(seed)
+    if len(candidates) <= n_permutations:
+        starts = candidates
+    else:
+        starts = rng.choice(candidates, size=n_permutations, replace=False)
+
+    placebo_cars = np.array([ar[s:s + days_span].sum() for s in starts])
+    p_value = float(np.mean(np.abs(placebo_cars) >= abs(real_car)))
+
+    return {
+        "p_value": round(p_value, 4),
+        "n": len(starts),
+        "p_value_note": (f"empirical p-value from {len(starts)} placebo "
+                         f"window(s) of the same {days_span}-day length, "
+                         "drawn from this company's own abnormal-return "
+                         f"series (excluding other flagged days); "
+                         f"deterministic (seed={seed})."),
+    }
+
+
 def trading_days(frame: pd.DataFrame) -> set[date]:
     """The real exchange calendar, for news attribution.
 
