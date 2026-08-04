@@ -1,3 +1,11 @@
+## SINGLE COMMAND RUN
+[download the repository and navigate insde the folder and open the terminal. Paste the following command in the CLI. The output JSON and HTML files will be stores in the /out folder]
+
+```text
+python -m ceia.analyze --company "\<COMPANY NAME\>" --ticker \<COMPANY STOCK TICKER AS PER YAHOO FINANCE\> --benchmark ^NSEI --start \<START DATE YYYY-MM-DD\> --end \<END DATE YYYY-MM-DD\> --alias \<ALIAS\> --out out/\<OUTPUT NAME\>.json --html out/\<OUTPUT NAME\>.html
+```
+
+
 # Company Event Impact Analyzer
 
 A research tool that lines up what the Indian financial press wrote about a
