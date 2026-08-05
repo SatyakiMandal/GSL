@@ -1,0 +1,1528 @@
+From 80b9f58173afb59c2b123a20e5955afb147350c8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 5 Aug 2026 08:17:22 +0000
+Subject: [PATCH] Overhaul HTML report content per user feedback on real
+ generated reports
+
+Drop the "What this report is, and is not" box and the "Method and
+provenance" section - both only repeated what the README/CLI banner
+already say. The one load-bearing sentence from the box (coincidence
+in time is not evidence of causation) moves into the Summary's opening
+paragraph instead of being lost.
+
+Enrich the Summary with actual findings instead of just methodology:
+candidate count and top day, a significance read (z-score, permutation
+p-value, threshold-robustness fraction), and - backed by a new
+flagging_diagnostics() in eventstudy.py - real counts for why the rest
+of the window's days aren't candidates (busy/toned coverage with an
+ordinary move, an unusual move with ordinary coverage, an unusual move
+with no coverage collected at all, or routine on both counts).
+
+Make the timeline chart self-explanatory without hovering: SVG <title>
+tooltips don't survive PDF/print/screenshot contexts, so each numbered
+badge now carries an always-visible dated label, and an in-chart
+caption explains what the badges and panels mean.
+
+Attach real article data to each candidate day: Incident.headlines is
+now a list of dicts (source, headline, url, sentiment_label, relevance,
+summary) instead of bare strings, rendered as a link to the original
+article (URL-scheme-checked before rendering) plus a real one-to-two
+sentence summary from the source's own meta description or an excerpt
+of the extracted body. A new per-category mechanism paragraph in
+incident_narrative() explains, generically, why that kind of news
+(earnings, regulatory, leadership, litigation, M&A, capital, product,
+macro) plausibly moves a price the way it did - a mechanism, not a
+claim about the specific article.
+
+Adds tests/test_narrative.py (direct coverage for _drop_explanation,
+_significance_paragraph, the mechanism paragraph, and the enriched
+summary opening - previously only exercised indirectly), a new
+TestFlaggingDiagnostics class in test_eventstudy.py, and new chart
+caption/badge-date tests in test_report.py. 366 tests passing, up from
+333.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BVU8edB8oYuzTKjXNdzhZU
+---
+ README.md                |  75 ++++++++---
+ ceia/analyze.py          |  23 +++-
+ ceia/charts.py           |  31 ++++-
+ ceia/eventstudy.py       | 104 ++++++++++++++-
+ ceia/narrative.py        | 203 ++++++++++++++++++++++++++++-
+ ceia/report.py           | 166 +++++++-----------------
+ tests/test_eventstudy.py | 106 ++++++++++++++++
+ tests/test_narrative.py  | 267 +++++++++++++++++++++++++++++++++++++++
+ tests/test_report.py     | 124 +++++++++++-------
+ 9 files changed, 896 insertions(+), 203 deletions(-)
+ create mode 100644 tests/test_narrative.py
+
+diff --git a/README.md b/README.md
+index bc630c3..70f7a40 100644
+--- a/README.md
++++ b/README.md
+@@ -16,7 +16,7 @@ It is a structured case study generator, not a trading signal and not proof of
+ causation. See [Limitations](#limitations).
+ 
+ **Status: complete and verified on real data.** All four phases, a GUI on top,
+-333 tests
++366 tests
+ passing, and PRD Success Metric #2 — a known incident correctly flagged with
+ the abnormal-return direction matching sentiment — is met. `yfinance` could
+ not be reached from the build sandbox (a TLS-terminating proxy broke it), so
+@@ -123,7 +123,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
+ `pip install`, which is why it's not in `.[all]`).
+ 
+ ```bash
+-pytest -q     # 333 tests, no network required
++pytest -q     # 366 tests, no network required
+ ```
+ 
+ ### Run the spike
+@@ -571,8 +571,8 @@ neither changes which days get flagged or how they are scored.
+   dependency). Requires at least 3 days with both values present after
+   dropping the first trading day's `NaN` return (there is nothing to diff
+   against on day one) and any day with no news. Reported as `r`, `r²`, `n`,
+-  and a plain-language note — CLI, HTML report ("Method and provenance"), and
+-  GUI all surface it. It is one Pearson coefficient over a handful of days;
++  and a plain-language note — CLI, the HTML report's stats grid, and GUI all
++  surface it. It is one Pearson coefficient over a handful of days;
+   read as a single extra lens on the daily table, not a significance test.
+ * **Trading volume**. Fetched by every price provider already but silently
+   discarded before this — `align_series()` now carries it through when
+@@ -643,30 +643,63 @@ python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
+ 
+ ### What the report contains
+ 
+-1. **A limitations box, before any finding** — not a footnote. Success Metric #3
+-   asks that a reader who did not build the tool understands both the finding
+-   *and* its limitations, so the caveats come first.
+-2. **Summary narrative** — what was examined, which return model was used, and
+-   what was found, in plain language.
+-3. **Timeline** (three stacked panels): company vs benchmark rebased to 100,
++The report used to carry two boilerplate sections — "What this report is,
++and is not" and "Method and provenance" — that only repeated what this
++README and the CLI banner already say. Both were removed; the one
++load-bearing sentence from the first ("coincidence in time is not evidence
++that an article caused a price move") was folded into the Summary's opening
++paragraph instead of being dropped, since it's the single most important
++thing a reader needs before the numbers below it.
++
++1. **Summary narrative** — not just what the tool does, but what this run
++   actually found: how many candidate days cleared both bars, the top
++   candidate's date and abnormal return, a plain-language significance
++   read (the top candidate's z-score, the permutation-test p-value when
++   there's a long enough price series to compute one, and how it held up
++   under nearby threshold choices — see
++   [CAR significance](#car-significance-from-a-caveated-t-stat-to-a-permutation-test)
++   and [Sensitivity](#sensitivity-does-a-flag-survive-a-different-threshold)),
++   and — the part a report that only shows the winners can't answer — real
++   counts for *why the rest of the window's days aren't in the table below*:
++   how many had busy or strongly-toned coverage with no matching price move,
++   how many moved unusually with no matching coverage, and how many moved
++   unusually with **no coverage collected for them at all** (flagged
++   explicitly as a gap in this run's sources, not a finding). Backed by
++   `ceia/eventstudy.py:flagging_diagnostics()`, which buckets every trading
++   day against the same two-part test `rank_incidents()` uses, independently.
++2. **Timeline** (three stacked panels): company vs benchmark rebased to 100,
+    with a dotted "start of window" reference line; abnormal return bars, axis
+    labelled in %; news volume coloured by tone, with a diagonal-hatch overlay
+    on negative-tone bars so the signal isn't colour-only for colourblind
+    readers. Flagged days get a dashed marker line **and** a numbered badge in
+    the top panel matching their rank in the incident table below (badge #1 =
+-   the highest-ranked candidate); every bar has a hover tooltip with its exact
+-   date and value.
+-4. **Ranked incident table** with abnormal return, z, CAR, t, a
+-   permutation-test p-value for CAR (see
+-   [CAR significance](#car-significance-from-a-caveated-t-stat-to-a-permutation-test)),
+-   and a threshold-robustness fraction (see
+-   [Sensitivity](#sensitivity-does-a-flag-survive-a-different-threshold)).
+-5. **Per-incident narrative** — two to four paragraphs each, plus the source
+-   headlines behind the flag.
++   the highest-ranked candidate). Each badge carries its date as a real,
++   always-visible SVG text label underneath it, not just a hover tooltip —
++   `<title>` tooltips don't render when the page is printed to PDF or
++   screenshotted, so the date has to be on the page itself. An in-chart
++   caption above the panels spells out what the numbers and markers mean.
++   Every bar also keeps a hover tooltip with its exact date and value for
++   on-screen use.
++3. **Ranked incident table** with abnormal return, z, CAR, t, a
++   permutation-test p-value for CAR, and a threshold-robustness fraction,
++   with the column footnotes explaining each inline (there's no longer a
++   separate "Method and provenance" section to point to).
++4. **Per-incident narrative** — two to four paragraphs each: what the price
++   did, what was being written and by how many outlets, a plain-language
++   explanation of *why that category of news* (earnings, regulatory,
++   leadership, litigation, M&A, capital, product, macro) is the kind that
++   plausibly moves a price the way it did — a mechanism, not a claim about
++   the specific article — whether tone and price direction agree, and
++   whether the move persisted or reversed over the event window.
++5. **Coverage behind each flag** — the source headlines, each linked to the
++   original article (only when the collected URL is `http(s)`; anything else
++   renders as plain text, defense-in-depth against untrusted scraped data),
++   with the outlet, tone and relevance, and a real one- to two-sentence
++   summary of what the article was actually about (the source's own meta
++   description/JSON-LD abstract when it published one, else a plain-text
++   excerpt of the extracted body).
+ 6. **Daily detail table**, flagged rows highlighted, with a `Volume` column
+    when the price provider supplied one.
+-7. **Method and provenance** — price providers used, model note, timestamp
+-   alignment, and per-source availability including anything disabled.
+ 
+ ### Narrative is template-based, not model-generated
+ 
+diff --git a/ceia/analyze.py b/ceia/analyze.py
+index e0e2eee..e3bb3e8 100644
+--- a/ceia/analyze.py
++++ b/ceia/analyze.py
+@@ -47,6 +47,7 @@ class Analysis:
+     secondary_daily: pd.DataFrame | None = None
+     secondary_meta: dict = field(default_factory=dict)
+     robustness: dict = field(default_factory=dict)
++    diagnostics: dict = field(default_factory=dict)
+ 
+     def to_dict(self) -> dict:
+         table = self.daily.reset_index()
+@@ -70,6 +71,7 @@ class Analysis:
+             "emotion_return_summary": self.emotion_summary,
+             "secondary_benchmark": secondary,
+             "threshold_robustness": self.robustness,
++            "flagging_diagnostics": self.diagnostics,
+             "unattributed_items": [
+                 {"url": i.url, "source": i.source, "headline": i.headline,
+                  "reason": i.timestamp_confidence}
+@@ -131,6 +133,9 @@ def analyse(
+         table, frame, incidents, config.event_window,
+         coverage_threshold, return_threshold,
+     )
++    diagnostics = eventstudy.flagging_diagnostics(
++        table, coverage_threshold, return_threshold,
++    )
+ 
+     secondary_daily = None
+     secondary_meta: dict = {}
+@@ -193,6 +198,7 @@ def analyse(
+         secondary_daily=secondary_daily,
+         secondary_meta=secondary_meta,
+         robustness=robustness,
++        diagnostics=diagnostics,
+     )
+ 
+ 
+@@ -219,6 +225,14 @@ def _print(analysis: Analysis) -> None:
+         print(f"        {len(analysis.unattributed)} item(s) had no usable "
+               f"timestamp and were NOT attributed to any trading day")
+ 
++    d = analysis.diagnostics
++    if d.get("trading_days"):
++        print(f"Flagging: {d['trading_days']} trading day(s), {d['days_with_news']} "
++              f"with news; {d['candidates']} candidate(s), {d['coverage_only']} "
++              f"busy/toned but ordinary move, {d['return_only']} unusual move but "
++              f"ordinary coverage, {d['no_coverage_big_move']} unusual move with NO "
++              f"coverage collected, {d['routine']} routine")
++
+     corr = analysis.correlation
+     if corr.get("r") is not None:
+         print(f"Sentiment/return correlation: r={corr['r']:+.3f} "
+@@ -306,8 +320,13 @@ def _print(analysis: Analysis) -> None:
+         if robust:
+             print(f"   robustness: flagged in {robust['flagged_in']}/{robust['of']} "
+                   f"threshold combinations tried")
+-        for headline in incident.headlines:
+-            print(f"     - {headline[:100]}")
++        for h in incident.headlines:
++            print(f"     - [{h['source']}] {h['headline'][:100]} "
++                  f"({h['sentiment_label']}, rel={h['relevance']:.2f})")
++            if h.get("url"):
++                print(f"       {h['url']}")
++            if h.get("summary"):
++                print(f"       \"{h['summary'][:160]}\"")
+ 
+     print(f"\n{'=' * 74}\nHOW TO READ THIS\n{'=' * 74}")
+     for note in analysis.caveats:
+diff --git a/ceia/charts.py b/ceia/charts.py
+index 245a7eb..ce27af2 100644
+--- a/ceia/charts.py
++++ b/ceia/charts.py
+@@ -134,9 +134,17 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
+     n = len(dates)
+     xs = _x_positions(n, WIDTH)
+ 
++    # Reserved only when there is something to caption. The caption exists
++    # because a numbered badge with no on-chart explanation is only
++    # meaningful to a reader who also has the paragraph above the chart in
++    # front of them - true in a browser, not true once the SVG is printed,
++    # screenshotted, or embedded in a PDF on its own (see ceia/pdf.py).
++    has_badges = bool(incidents)
++    top_caption_h = 18.0 if has_badges else 0.0
++
+     price_h, abn_h, cov_h = 190.0, 130.0, 110.0
+     gap = 46.0
+-    price_y = PAD_TOP
++    price_y = PAD_TOP + top_caption_h
+     abn_y = price_y + price_h + gap
+     cov_y = abn_y + abn_h + gap
+     total_h = cov_y + cov_h + LABEL_BAND + 14
+@@ -153,6 +161,13 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
+         'patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'
+         '<line x1="0" y1="0" x2="0" y2="6" class="hatch-line"/></pattern></defs>'
+     ]
++    if has_badges:
++        parts.append(
++            f'<text x="{PAD_LEFT}" y="{PAD_TOP - 4:.1f}" class="chart-caption">'
++            "Numbered circles mark the ranked candidate incident days below, "
++            "each dated underneath — hover any bar for its exact date and "
++            "value.</text>"
++        )
+ 
+     # ---- Panel 1: rebased price vs benchmark -----------------------------
+     closes = daily["close"].astype(float).tolist()
+@@ -208,6 +223,20 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
+             f'<text x="{x:.1f}" y="{badge_cy + 3.5:.1f}" text-anchor="middle">{rank}</text>'
+             f"<title>{tooltip}</title></g>"
+         )
++        # The date each badge refers to, always visible - not only in the
++        # <title> tooltip, which needs a mouse hover and so renders as
++        # nothing at all once this SVG is screenshotted or exported to PDF
++        # (see ceia/pdf.py). A small background rect keeps it legible where
++        # it crosses the price lines behind it.
++        date_label = f"{day:%d %b}"
++        label_y = badge_cy + badge_r + 11.0
++        label_w = len(date_label) * 5.4 + 6.0
++        parts.append(
++            f'<rect x="{x - label_w / 2:.1f}" y="{label_y - 9.0:.1f}" '
++            f'width="{label_w:.1f}" height="12" rx="2" class="badge-date-bg"/>'
++            f'<text x="{x:.1f}" y="{label_y:.1f}" text-anchor="middle" '
++            f'class="badge-date">{date_label}</text>'
++        )
+ 
+     # The legend sits in the title row rather than inside the plot: a flat
+     # benchmark line runs along the top of the panel and an in-plot legend
+diff --git a/ceia/eventstudy.py b/ceia/eventstudy.py
+index cf535bf..999dba2 100644
+--- a/ceia/eventstudy.py
++++ b/ceia/eventstudy.py
+@@ -78,7 +78,11 @@ class Incident:
+     score: float
+     direction_agrees: bool
+     car: dict = field(default_factory=dict)
+-    headlines: list[str] = field(default_factory=list)
++    # One dict per source article behind this flag: source, headline, url,
++    # sentiment_label, relevance, and a real summary (the article's own
++    # meta description/JSON-LD abstract where the source provides one,
++    # else a plain-text excerpt of the body) - see attach_headlines().
++    headlines: list[dict] = field(default_factory=list)
+     sources: list[str] = field(default_factory=list)
+ 
+     def to_dict(self) -> dict:
+@@ -319,16 +323,108 @@ def rank_incidents(
+     return incidents[:top_n] if top_n else incidents
+ 
+ 
++def flagging_diagnostics(
++    table: pd.DataFrame,
++    coverage_threshold: float = DEFAULT_COVERAGE_Z,
++    return_threshold: float = DEFAULT_RETURN_Z,
++) -> dict:
++    """Why the few candidate days were kept and the rest were not.
++
++    ``rank_incidents()`` only reports the days that cleared both bars. That
++    tells a reader *what* survived, not *why* the rest didn't - a report
++    that only shows the winners looks arbitrary. This buckets every trading
++    day in the window against the same two-part test (unusual coverage AND
++    unusual abnormal return) so the Summary can say, with real counts, how
++    many days were routine, how many had unusual coverage that didn't move
++    the price, and - a real gap worth naming rather than hiding - how many
++    days had an unusually large move with no collected coverage to explain
++    it at all.
++    """
++    if table.empty:
++        return {
++            "trading_days": 0, "days_with_news": 0, "thin_baseline": False,
++            "candidates": 0, "coverage_only": 0, "return_only": 0,
++            "no_coverage_big_move": 0, "routine": 0,
++        }
++
++    days_with_news = int((table["unique_count"] > 0).sum())
++    thin_baseline = days_with_news < MIN_DAYS_FOR_BASELINE
++
++    candidates = coverage_only = return_only = routine = 0
++    no_coverage_quiet = no_coverage_big_move = 0
++
++    for _, row in table.iterrows():
++        has_news = row["unique_count"] > 0
++        return_unusual = abs(row["abnormal_return_z"]) >= return_threshold
++        if not has_news:
++            if return_unusual:
++                no_coverage_big_move += 1
++            else:
++                no_coverage_quiet += 1
++            continue
++        if thin_baseline:
++            coverage_unusual = True
++        else:
++            coverage_unusual = (row["coverage_z"] >= coverage_threshold
++                                or abs(row["sentiment_z"]) >= coverage_threshold)
++        if coverage_unusual and return_unusual:
++            candidates += 1
++        elif coverage_unusual:
++            coverage_only += 1
++        elif return_unusual:
++            return_only += 1
++        else:
++            routine += 1
++
++    return {
++        "trading_days": len(table),
++        "days_with_news": days_with_news,
++        "thin_baseline": thin_baseline,
++        "candidates": candidates,
++        "coverage_only": coverage_only,
++        "return_only": return_only,
++        "no_coverage_big_move": no_coverage_big_move,
++        "routine": routine + no_coverage_quiet,
++    }
++
++
++def _excerpt(text: str, max_len: int = 220) -> str:
++    """A plain-text summary fallback when a source gave no meta description.
++
++    Cut at the last whole word inside the limit rather than mid-word, so a
++    reader isn't left staring at a truncated fragment like "...derivativ".
++    """
++    text = " ".join(text.split())  # collapse whitespace/newlines from body extraction
++    if len(text) <= max_len:
++        return text
++    cut = text[:max_len].rsplit(" ", 1)[0]
++    return cut + "…"
++
++
+ def attach_headlines(incidents: list[Incident], items: list[NewsItem],
+                      limit: int = 5) -> list[Incident]:
+-    """Hang the source items behind each flag onto the incident (Section 8)."""
++    """Hang the source articles behind each flag onto the incident (Section 8).
++
++    Each entry carries the real article URL and a real summary - the
++    source's own meta description/JSON-LD abstract (``NewsItem.snippet``)
++    where available, else a plain-text excerpt of the extracted body - so a
++    reader can follow the link and see what the story actually said, not
++    just its headline.
++    """
+     for incident in incidents:
+         relevant = [i for i in items
+                     if i.trading_day == incident.day and i.duplicate_of is None]
+         relevant.sort(key=lambda i: (-abs(i.sentiment_score), -i.relevance_score))
+         incident.headlines = [
+-            f"[{i.source}] {i.headline} ({i.sentiment_label}, "
+-            f"rel={i.relevance_score:.2f})"
++            {
++                "source": i.source,
++                "headline": i.headline,
++                "url": i.url,
++                "sentiment_label": i.sentiment_label,
++                "relevance": round(i.relevance_score, 2),
++                "summary": (i.snippet.strip() if i.snippet.strip()
++                           else _excerpt(i.body) if i.body else ""),
++            }
+             for i in relevant[:limit]
+         ]
+     return incidents
+diff --git a/ceia/narrative.py b/ceia/narrative.py
+index 3b5a5cf..3746d9b 100644
+--- a/ceia/narrative.py
++++ b/ceia/narrative.py
+@@ -39,6 +39,68 @@ _EVENT_PHRASES = {
+     "": "company news",
+ }
+ 
++# Why this *category* of news is the kind that plausibly moves a price the
++# way it did - a generic, category-level mechanism, not a claim about this
++# specific article. Deliberately hedged the same way the rest of this module
++# is: these describe why the category is the sort of thing markets reprice
++# on quickly, not that this particular story is proven to have done it here.
++# Keyed by ceia.sentiment.tag_event()'s categories, same source of truth.
++_EVENT_MECHANISM = {
++    "earnings": (
++        "Results and guidance directly update the market's estimate of the "
++        "company's near-term profitability, which is why surprises here tend to "
++        "reprice a stock within the same session rather than drift in over weeks."
++    ),
++    "regulatory": (
++        "Regulatory or investigative developments change the market's read of "
++        "tail risk — potential fines, restrictions, or governance findings that "
++        "were not in anyone's model the day before — which is the kind of news "
++        "that typically moves a price fast and hard rather than gradually."
++    ),
++    "leadership": (
++        "A change at the top revises how much the market trusts the people "
++        "steering the company's strategy and disclosures, and an unplanned exit "
++        "in particular tends to raise questions the announcement itself doesn't "
++        "answer, which markets often discount for immediately."
++    ),
++    "litigation": (
++        "Legal proceedings create a range of possible financial outcomes — "
++        "damages, settlements, injunctions — that did not exist as a modelled "
++        "risk before the news broke, and markets tend to price in the worst "
++        "plausible case first and revise later as facts emerge."
++    ),
++    "mna": (
++        "Merger, acquisition, or stake-sale news directly changes assumptions "
++        "about the company's future ownership, balance sheet, or competitive "
++        "position, all of which flow straight into a valuation model rather "
++        "than needing to be inferred."
++    ),
++    "capital": (
++        "Capital-raising or shareholder-return news (a placement, buyback, or "
++        "dividend change) mechanically changes share count, leverage, or cash "
++        "return to shareholders, which shows up in a valuation model directly, "
++        "not just as sentiment."
++    ),
++    "product": (
++        "Operational or product news changes expectations about future revenue "
++        "or capacity, though this category usually moves a price less sharply "
++        "than earnings or regulatory news unless the scale is large relative to "
++        "the company's existing business."
++    ),
++    "macro": (
++        "Sector-wide or macroeconomic news moves the whole market's or "
++        "sector's baseline, not just this company specifically — worth reading "
++        "against the abnormal return above, which already nets out the "
++        "benchmark's own move that day."
++    ),
++    "other": (
++        "This coverage did not match one of the categories above with a clear "
++        "price-relevant mechanism (results, regulatory action, a leadership "
++        "change, a deal, a capital event); read the headlines below directly "
++        "for what specifically was being reported."
++    ),
++}
++
+ # GoEmotions labels, worded for prose. This is a secondary, general-purpose
+ # signal (see ceia/emotion.py) - it never changes what a paragraph concludes,
+ # only adds a clause naming the flavour of the tone FinBERT already scored.
+@@ -147,6 +209,15 @@ def incident_narrative(incident: Incident, company: str, benchmark: str,
+         )
+     paragraphs.append(sentence)
+ 
++    # 2b. Why this *category* of news is the kind that plausibly moves a price
++    # this way - a mechanism, not a claim about the specific article (that
++    # would need the article's own text, which belongs in the source list
++    # below, not in template prose). Skipped for "" (no category tagged at
++    # all, distinct from "other" which did get tagged and found nothing).
++    mechanism = _EVENT_MECHANISM.get(incident.dominant_event)
++    if mechanism:
++        paragraphs.append(mechanism)
++
+     # 3. Whether tone and price agree — and what that does and does not mean.
+     if incident.direction_agrees:
+         paragraphs.append(
+@@ -208,18 +279,109 @@ def incident_narrative(incident: Incident, company: str, benchmark: str,
+     return paragraphs
+ 
+ 
++def _drop_explanation(diagnostics: dict | None, candidates: int) -> str:
++    """Why the rest of the window's trading days are not in the table below.
++
++    A report that only shows the days that made the cut looks arbitrary
++    without this - it answers "were the others considered and rejected, or
++    never checked at all" with real counts, bucketed by which of the two
++    bars (unusual coverage, unusual price move) each day cleared.
++    """
++    if not diagnostics or not diagnostics.get("trading_days"):
++        return ""
++    d = diagnostics
++    dropped = d["trading_days"] - candidates
++    if dropped <= 0:
++        return ""
++    clauses = []
++    if d.get("coverage_only"):
++        n = d["coverage_only"]
++        clauses.append(
++            f"{n} {_plural(n, 'day')} had busy or strongly-toned coverage without a "
++            f"matching unusual price move"
++        )
++    if d.get("return_only"):
++        n = d["return_only"]
++        clauses.append(
++            f"{n} {_plural(n, 'day')} moved unusually without correspondingly unusual "
++            f"coverage"
++        )
++    if d.get("no_coverage_big_move"):
++        n = d["no_coverage_big_move"]
++        clauses.append(
++            f"{n} {_plural(n, 'day')} saw an unusually large price move with "
++            f"<strong>no coverage collected for it at all</strong> in this run's "
++            f"sources — a real gap, not a finding"
++        )
++    if d.get("routine"):
++        n = d["routine"]
++        clauses.append(f"{n} {_plural(n, 'day')} were routine on both counts")
++    if not clauses:
++        return ""
++    return (
++        f"The other {dropped} trading {_plural(dropped, 'day')} in the window did not "
++        f"clear both bars at once: " + "; ".join(clauses) + ". Only a day that clears "
++        f"both — unusual coverage <em>and</em> an unusual price move — becomes a "
++        f"candidate; either alone is not enough on its own."
++    )
++
++
++def _significance_paragraph(top: Incident, robustness: dict | None) -> str:
++    """States, in plain language, how much to trust the top candidate.
++
++    Leans on the permutation p-value rather than the z-score's own implied
++    normal-tail probability - the z-score's normality assumption is exactly
++    what the permutation test exists to sidestep (see returns.py), so
++    restating "N standard deviations" as a spurious "1 in X chance" here
++    would oversell a number the rest of this codebase deliberately declines
++    to trust.
++    """
++    sentence = (
++        f"The top candidate's abnormal return sat {abs(top.abnormal_return_z):.1f} "
++        f"standard deviations from this stock's own typical daily variation."
++    )
++    car = top.car or {}
++    p_value = car.get("p_value")
++    if p_value is not None:
++        n = car.get("n", 0)
++        sentence += (
++            f" A permutation test — which does not depend on that z-score's normality "
++            f"assumption — checked this directly: across {n:,} random comparable-length "
++            f"windows drawn from this stock's own price history, "
++            f"{p_value * 100:.1f}% were at least as extreme (p = {p_value:.3f})."
++        )
++    robust = (robustness or {}).get("days", {}).get(top.day.isoformat()) if robustness else None
++    if robust:
++        sentence += (
++            f" It also held up under a range of nearby threshold choices, not just the "
++            f"exact ones configured: flagged in {robust['flagged_in']} of "
++            f"{robust['of']} combinations tried."
++        )
++    return sentence
++
++
+ def summary_narrative(company: str, ticker: str, benchmark: str,
+                       start: date, end: date, incidents: list[Incident],
+                       daily_rows: int, news_count: int,
+-                      model_kind: str) -> list[str]:
+-    """The opening paragraphs of the report."""
++                      model_kind: str, diagnostics: dict | None = None,
++                      robustness: dict | None = None,
++                      weak_scale: bool = False) -> list[str]:
++    """The opening paragraphs of the report.
++
++    This is a structured case study, not investment advice and not a
++    statistically validated causal finding — the single most important
++    thing for a reader to take from this report, so it opens here rather
++    than in a separate box a reader could skip past.
++    """
+     paragraphs = [
+         f"This report examines {company} ({ticker}) between {start:%d %B %Y} and "
+         f"{end:%d %B %Y}, covering {daily_rows} trading "
+-        f"{_plural(daily_rows, 'day')}. It collects what the Indian financial press "
+-        f"published about the company over that period, measures how the stock moved "
+-        f"relative to {benchmark}, and identifies days where notable coverage and an "
+-        f"unusual company-specific price move happened to fall together."
++        f"{_plural(daily_rows, 'day')}. It is a structured case study, not "
++        f"investment advice, collecting what the Indian financial press published "
++        f"about the company over that period and measuring how the stock moved "
++        f"relative to {benchmark}, to identify days where notable coverage "
++        f"<strong>coincided with</strong> an unusual company-specific price move. "
++        f"Coincidence in time is not evidence that an article caused a price move."
+     ]
+ 
+     if model_kind == "market-model":
+@@ -240,6 +402,28 @@ def summary_narrative(company: str, ticker: str, benchmark: str,
+             "the abnormal return."
+         )
+ 
++    weight_notes = []
++    if diagnostics and diagnostics.get("thin_baseline"):
++        weight_notes.append(
++            f"only {diagnostics.get('days_with_news', 0)} trading "
++            f"{_plural(diagnostics.get('days_with_news', 0), 'day')} in this window "
++            f"carried any coverage at all, too few to judge which days were unusually "
++            f"busy — so the coverage bar below was relaxed to 'any coverage', and a "
++            f"flag here rests more heavily on the price move than on the coverage "
++            f"being unusual"
++        )
++    if weak_scale:
++        weight_notes.append(
++            "abnormal returns are standardised against this analysis window's own "
++            "spread rather than a clean estimation window beforehand, which "
++            "understates how unusual the largest moves in it really are"
++        )
++    if weight_notes:
++        paragraphs.append(
++            "How much weight to put on the numbers below: "
++            + "; ".join(weight_notes) + "."
++        )
++
+     if not incidents:
+         paragraphs.append(
+             f"Across {news_count} collected {_plural(news_count, 'item')} of coverage, "
+@@ -250,6 +434,9 @@ def summary_narrative(company: str, ticker: str, benchmark: str,
+             f"company. It can also mean the thresholds are set too strictly, or the "
+             f"window is too short for the coverage baseline to mean much."
+         )
++        drop_note = _drop_explanation(diagnostics, candidates=0)
++        if drop_note:
++            paragraphs.append(drop_note)
+         return paragraphs
+ 
+     top = incidents[0]
+@@ -261,6 +448,10 @@ def summary_narrative(company: str, ticker: str, benchmark: str,
+         f"of {_pct(top.abnormal_return)} alongside "
+         f"{_tone(top.mean_sentiment)} coverage."
+     )
++    paragraphs.append(_significance_paragraph(top, robustness))
++    drop_note = _drop_explanation(diagnostics, candidates=len(incidents))
++    if drop_note:
++        paragraphs.append(drop_note)
+     agreeing = sum(1 for i in incidents if i.direction_agrees)
+     if len(incidents) > 1:
+         paragraphs.append(
+diff --git a/ceia/report.py b/ceia/report.py
+index f45b811..7b79b71 100644
+--- a/ceia/report.py
++++ b/ceia/report.py
+@@ -73,6 +73,9 @@ stroke-linejoin:round;stroke-linecap:round}
+ .baseline{stroke:var(--muted);stroke-width:1;stroke-dasharray:2 3;opacity:.55}
+ .incident-badge circle{fill:var(--warn-br);stroke:var(--card);stroke-width:1.5}
+ .incident-badge text{fill:#fff;font-size:10px;font-weight:700;font-family:inherit}
++.badge-date-bg{fill:var(--plot);opacity:.88}
++.badge-date{fill:var(--warn-br);font-size:9px;font-weight:700;font-family:inherit}
++.chart-caption{fill:var(--muted);font-size:10.5px;font-style:italic}
+ .bar-pos{fill:var(--pos)}.bar-neg{fill:var(--neg)}
+ .bar-incident{stroke:var(--warn-br);stroke-width:1.4}
+ .tone-neg{fill:var(--neg);opacity:.82}.tone-pos{fill:var(--pos);opacity:.82}
+@@ -87,6 +90,10 @@ border-radius:0 9px 9px 0;padding:18px 22px;margin:20px 0;background:var(--card)
+ padding:1px 9px;font-size:.82rem;font-weight:700;margin-right:9px}
+ .src{list-style:none;padding:0;margin:12px 0 0}
+ .src li{padding:7px 0;border-top:1px solid var(--line);font-size:.9rem}
++.src a{color:var(--accent);text-decoration:none}
++.src a:hover{text-decoration:underline}
++.src-meta{color:var(--muted);font-size:.8rem}
++.src-summary{color:var(--muted);font-size:.85rem;font-style:italic;margin-top:3px;line-height:1.5}
+ .tag{display:inline-block;font-size:.72rem;padding:1px 7px;border-radius:4px;
+ background:var(--plot);color:var(--muted);margin-right:7px;border:1px solid var(--line)}
+ .foot{color:var(--muted);font-size:.85rem;margin-top:52px;padding-top:16px;
+@@ -96,21 +103,33 @@ code{background:var(--plot);padding:1px 5px;border-radius:4px;font-size:.87em}
+ """
+ 
+ 
+-def _sentence(text: str) -> str:
+-    """Ensure a fragment ends with terminal punctuation before it is followed
+-    by more prose. ``model_note`` values (e.g. "fitted on 120 trading days
+-    before 2023-01-20") have none, which ran straight into the next sentence
+-    with no separator."""
+-    text = text.strip()
+-    if text and text[-1] not in ".!?":
+-        text += "."
+-    return text
+-
+-
+ def _cls(value: float) -> str:
+     return "pos" if value > 0 else "neg" if value < 0 else ""
+ 
+ 
++def _headline_item(h: dict) -> str:
++    """One <li> for the source list behind an incident flag.
++
++    Links to the real article and shows its own summary (a genuine meta
++    description/abstract from the source, or a plain-text excerpt of the
++    body - see eventstudy.attach_headlines) so a reader can see what the
++    story actually said without leaving the report, and follow the link to
++    verify it. The URL scheme is checked before being used as an href -
++    scraped data, so treated as untrusted input, not just escaped text.
++    """
++    headline = escape(h.get("headline") or "(no headline)")
++    url = h.get("url") or ""
++    title = (
++        f'<a href="{escape(url)}" target="_blank" rel="noopener noreferrer">{headline}</a>'
++        if url.startswith(("http://", "https://")) else headline
++    )
++    meta = f'[{escape(h.get("source", "?"))}, {escape(h.get("sentiment_label") or "—")}, ' \
++          f'rel={h.get("relevance", 0):.2f}]'
++    summary = h.get("summary") or ""
++    summary_html = f'<div class="src-summary">{escape(summary)}</div>' if summary else ""
++    return f'<li>{title} <span class="src-meta">{meta}</span>{summary_html}</li>'
++
++
+ def _pct(value: float, digits: int = 2) -> str:
+     if value is None or pd.isna(value):
+         return "—"
+@@ -176,33 +195,6 @@ def _daily_table(daily: pd.DataFrame, incident_days: set[date],
+     )
+ 
+ 
+-def _emotion_valence_table(emotion_summary: dict) -> str:
+-    groups = (emotion_summary or {}).get("groups") or {}
+-    if not groups:
+-        return ""
+-    rows = []
+-    for valence in ("positive", "negative", "ambiguous"):
+-        g = groups.get(valence)
+-        if not g:
+-            continue
+-        rows.append(
+-            f"<tr><td class=\"txt\">{valence}</td><td>{g['n_days']}</td>"
+-            f"<td class=\"{_cls(g['mean_abnormal_return'])}\">"
+-            f"{_pct(g['mean_abnormal_return'])}</td>"
+-            f"<td class=\"{_cls(g['mean_weighted_sentiment'])}\">"
+-            f"{g['mean_weighted_sentiment']:+.2f}</td>"
+-            f"<td class=\"txt\">{escape(', '.join(g['labels_seen']))}</td></tr>"
+-        )
+-    if not rows:
+-        return ""
+-    return (
+-        '<div class="scroll"><table><thead><tr><th class="txt">Valence</th>'
+-        "<th>Days</th><th>Mean abnormal return</th><th>Mean sentiment</th>"
+-        '<th class="txt">Labels seen</th></tr></thead><tbody>'
+-        + "".join(rows) + "</tbody></table></div>"
+-    )
+-
+-
+ def _incident_table(incidents: list[Incident], window: tuple[int, int],
+                     robustness: dict | None = None) -> str:
+     if not incidents:
+@@ -255,11 +247,10 @@ def _incident_sections(incidents: list[Incident], company: str, benchmark: str,
+             f"<p>{text}</p>"
+             for text in incident_narrative(inc, company, benchmark, window)
+         )
+-        sources = "".join(
+-            f"<li>{escape(headline)}</li>" for headline in inc.headlines
+-        )
++        sources = "".join(_headline_item(h) for h in inc.headlines)
+         source_block = (
+-            f'<h4 style="margin:16px 0 4px;font-size:.92rem">Coverage behind this flag</h4>'
++            f'<h4 style="margin:16px 0 4px;font-size:.92rem">Coverage behind this flag — '
++            f'linked to the original article, where a source stated one</h4>'
+             f'<ul class="src">{sources}</ul>' if sources else ""
+         )
+         volume_note = ""
+@@ -308,19 +299,22 @@ def build_html(analysis) -> str:
+     safe_company = escape(config.company)
+     safe_benchmark = escape(config.benchmark)
+ 
++    diagnostics = getattr(analysis, "diagnostics", {}) or {}
++    robustness = getattr(analysis, "robustness", {}) or {}
++    weak_scale = "analysis-window" in str(price.get("ar_scale_source", ""))
++
+     summary = "".join(
+         f"<p>{text}</p>" for text in summary_narrative(
+             safe_company, escape(config.ticker), safe_benchmark,
+             config.start, config.end, incidents, len(daily), news_count,
+             price.get("model", "market-adjusted"),
++            diagnostics=diagnostics, robustness=robustness, weak_scale=weak_scale,
+         )
+     )
+ 
+     correlation = getattr(analysis, "correlation", {}) or {}
+     corr_display = (f"r = {correlation['r']:+.3f}"
+                     if correlation.get("r") is not None else "n/a")
+-    emotion_summary = getattr(analysis, "emotion_summary", {}) or {}
+-    emotion_table = _emotion_valence_table(emotion_summary)
+ 
+     secondary_meta = getattr(analysis, "secondary_meta", {}) or {}
+     secondary_daily = getattr(analysis, "secondary_daily", None)
+@@ -329,8 +323,6 @@ def build_html(analysis) -> str:
+     if secondary_ticker:
+         daily_display = daily.join(secondary_daily[["secondary_abnormal_return"]])
+ 
+-    robustness = getattr(analysis, "robustness", {}) or {}
+-
+     stats = "".join([
+         _stat("Trading days", str(len(daily))),
+         _stat("News items", str(news_count)),
+@@ -342,22 +334,6 @@ def build_html(analysis) -> str:
+     ] + ([_stat(f"Beta vs {secondary_ticker}", f"{secondary_meta.get('beta', float('nan')):.2f}")]
+         if secondary_ticker and secondary_meta.get("beta") is not None else []))
+ 
+-    caveats = "".join(f"<li>{escape(note)}</li>" for note in analysis.caveats)
+-
+-    # Per-source availability, including anything that failed or is disabled.
+-    source_rows = []
+-    for key, state in (analysis.news_meta.get("source_status") or {}).items():
+-        source_rows.append(f"<tr><td>{escape(key)}</td>"
+-                           f'<td class="txt">{escape(str(state))}</td></tr>')
+-    for key, why in (analysis.news_meta.get("disabled_sources") or {}).items():
+-        source_rows.append(f"<tr><td>{escape(key)}</td>"
+-                           f'<td class="txt">DISABLED — {escape(str(why))}</td></tr>')
+-    source_table = (
+-        '<div class="scroll"><table><thead><tr><th>Source</th>'
+-        '<th class="txt">Status this run</th></tr></thead><tbody>'
+-        + "".join(source_rows) + "</tbody></table></div>"
+-    ) if source_rows else '<p class="empty">No source status recorded.</p>'
+-
+     unattributed = ""
+     if analysis.unattributed:
+         items = "".join(
+@@ -385,15 +361,6 @@ def build_html(analysis) -> str:
+ <div class="sub">{escape(config.ticker)} vs {escape(config.benchmark)} &middot;
+ {config.start:%d %B %Y} to {config.end:%d %B %Y} &middot; generated {generated}</div>
+ 
+-<div class="warn">
+-<h3>What this report is, and is not</h3>
+-<p>This is a <strong>structured case study</strong>, not a statistically validated
+-causal finding, and not investment advice. It identifies days where notable news
+-coverage <strong>coincided with</strong> an unusual company-specific price move.
+-Coincidence in time is not evidence that an article caused a price move.</p>
+-<ul>{caveats}</ul>
+-</div>
+-
+ <h2>Summary</h2>
+ {summary}
+ <div class="grid">{stats}</div>
+@@ -415,9 +382,12 @@ exact date and value.</p>
+ The ranking orders days for attention; it is not a significance test.
+ <em>*Emotion</em> is a secondary, general-purpose signal (GoEmotions) read
+ alongside tone, not a substitute for it. <em>**p</em> is a permutation-test
+-p-value for the CAR. <em>***Robust</em> counts how many of a small grid of
+-threshold combinations still flag this day — see Method and provenance below
+-for all three.</p>
++p-value for the CAR — the fraction of random comparable-length windows in
++this stock's own price history with as extreme a move, an alternative to
++the <code>t</code> column that doesn't need to assume a large, independent,
++normally distributed sample. <em>***Robust</em> counts how many of a 3×3
++grid of nearby coverage/return threshold choices still flag this day (9 is
++the most robust; a day flagged in only 1–2 is threshold-sensitive).</p>
+ {_incident_table(incidents, config.event_window, robustness)}
+ {_incident_sections(incidents, safe_company, safe_benchmark, config.event_window)}
+ 
+@@ -427,54 +397,6 @@ for all three.</p>
+ 
+ {unattributed}
+ 
+-<h2>Method and provenance</h2>
+-<div class="card">
+-<p><strong>Abnormal return.</strong> {escape(_sentence(price.get('model_note', '')))}
+-Prices came from <code>{escape(str(price.get('company_provider', '?')))}</code>
+-(company) and <code>{escape(str(price.get('benchmark_provider', '?')))}</code>
+-(benchmark). Abnormal returns are standardised against the
+-{escape(str(price.get('ar_scale_source', 'unknown scale')))}.</p>
+-<p><strong>CAR significance.</strong> The <code>t</code> column next to CAR
+-assumes independent, normally distributed abnormal returns over a large
+-sample — an assumption a single company's own handful of trading days does
+-not meet, so it is printed only as the conventional figure, not a validated
+-one. The <code>p</code> column is a permutation-test alternative that does
+-not need that assumption: many random same-length windows are drawn from
+-this company's own abnormal-return series (excluding every other flagged
+-day, so the null is not contaminated by real events), and <code>p</code> is
+-the fraction of those placebo CARs at least as extreme as the real one. It
+-is still only valid for this one run on this one company — it says nothing
+-about whether the pattern would replicate elsewhere — but it does not
+-inherit the independence assumption <code>t</code> does.</p>
+-<p><strong>Timestamp alignment.</strong> An item published after the 15:30 IST close is
+-attributed to the <em>next</em> trading day, since it could not have moved that day's
+-close. {news_stats.get('after_close', 0)} of the collected items fell after the close.</p>
+-<p><strong>Sentiment.</strong> Scored with FinBERT, a finance-tuned model, rather than a
+-general-purpose sentiment library — ordinary financial phrasing such as "beat
+-expectations but missed guidance" is read incorrectly by generic tools. This
+-score is what drives incident detection and the abnormal-return-direction
+-check above.</p>
+-<p><strong>Emotion.</strong> A secondary tag from GoEmotions (Demszky et al.,
+-2020), a 27-emotion model trained on Reddit comments — <strong>not</strong> a
+-finance-tuned model, and reading formal financial-press prose is a genuine
+-domain mismatch. It is included as texture (fear vs. anger vs. disapproval
+-alongside a shared "negative" FinBERT score can distinguish, say, a regulatory
+-probe from a hostile FPO withdrawal) and never affects relevance, incident
+-flagging, or the direction check. Scored on the headline only, and left blank
+-below a 30% confidence threshold rather than forced to a low-confidence guess.</p>
+-<p><strong>Sentiment/return correlation.</strong>
+-{escape(correlation.get('note', 'Not computed.'))} A Pearson correlation
+-across a handful of trading days is descriptive, not a significance test —
+-treat it as a single additional lens on the same daily table above, not as
+-proof that sentiment predicts price.</p>
+-{f'<p><strong>Emotion valence vs return.</strong> {escape(emotion_summary.get("note", ""))}</p>{emotion_table}' if emotion_table else ''}
+-{f'<p><strong>Secondary benchmark ({escape(secondary_ticker)}).</strong> {escape(secondary_meta.get("note", ""))}</p>' if secondary_ticker else (f'<p><strong>Secondary benchmark.</strong> {escape(secondary_meta["note"])}</p>' if secondary_meta.get("note") else '')}
+-{f'<p><strong>Threshold robustness.</strong> {escape(robustness.get("note", ""))}</p>' if robustness.get("days") else ''}
+-</div>
+-
+-<h3>Source availability</h3>
+-{source_table}
+-
+ <div class="foot">
+ Generated by the Company Event Impact Analyzer. Descriptive research only —
+ not investment advice, and not a claim of causation.
+diff --git a/tests/test_eventstudy.py b/tests/test_eventstudy.py
+index 7fa3d13..83fa038 100644
+--- a/tests/test_eventstudy.py
++++ b/tests/test_eventstudy.py
+@@ -19,6 +19,7 @@ from ceia.eventstudy import (  # noqa: E402
+     build_daily_table,
+     caveats,
+     emotion_valence_summary,
++    flagging_diagnostics,
+     rank_incidents,
+     robustness_check,
+     sentiment_return_correlation,
+@@ -616,3 +617,108 @@ class TestEmotionValenceSummary:
+         table = pd.DataFrame({"abnormal_return": [0.01, -0.02]})
+         result = emotion_valence_summary(table)
+         assert result["groups"] == {}
++
++
++class TestFlaggingDiagnostics:
++    """Every trading day, bucketed by which of the two flagging bars it
++    cleared - the source of the report's "why the rest were dropped" text.
++    """
++
++    def _mixed_window(self):
++        """15 trading days, one of each bucket, plus a run of routine days.
++
++        Day 3 gets busy negative coverage *and* an unusual move (a
++        candidate); day 6 gets the same busy negative coverage but an
++        ordinary move (coverage_only); day 9 gets an unusual move but only
++        the same one ordinary story every other day gets (return_only); day
++        12 gets an unusual move with no coverage collected at all
++        (no_coverage_big_move); everything else is routine. 14 of the 15
++        days carry some news, comfortably clearing MIN_DAYS_FOR_BASELINE so
++        the coverage bar is the real z-test, not the thin-baseline relaxation.
++        """
++        days = [date(2023, 1, d) for d in range(2, 21) if date(2023, 1, d).weekday() < 5]
++        candidate_day, coverage_only_day = days[3], days[6]
++        return_only_day, no_coverage_day = days[9], days[12]
++        returns = {d: (0.001, 0.0005) for d in days}
++        for d in (candidate_day, return_only_day, no_coverage_day):
++            returns[d] = (-0.15, 0.0)
++        frame = price_frame(returns)
++
++        news = []
++        for d in days:
++            if d == no_coverage_day:
++                continue
++            busy = d in (candidate_day, coverage_only_day)
++            for k in range(8 if busy else 1):
++                news.append(item(d, -0.8 if busy else 0.0, url=f"{d}-{k}"))
++
++        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
++        return table, {
++            "candidate": candidate_day, "coverage_only": coverage_only_day,
++            "return_only": return_only_day, "no_coverage": no_coverage_day,
++        }
++
++    def test_buckets_every_trading_day_correctly(self):
++        table, marked = self._mixed_window()
++        diag = flagging_diagnostics(table)
++        assert diag["trading_days"] == 15
++        assert diag["days_with_news"] == 14
++        assert diag["thin_baseline"] is False
++        assert diag["candidates"] == 1
++        assert diag["coverage_only"] == 1
++        assert diag["return_only"] == 1
++        assert diag["no_coverage_big_move"] == 1
++        assert diag["routine"] == 11
++        total = (diag["candidates"] + diag["coverage_only"] + diag["return_only"]
++                + diag["no_coverage_big_move"] + diag["routine"])
++        assert total == diag["trading_days"]
++
++    def test_candidates_count_matches_rank_incidents(self):
++        """The two independent tallies must never disagree with each other."""
++        table, marked = self._mixed_window()
++        frame = price_frame({d: (0.001, 0.0005) for d in
++                             [date(2023, 1, d) for d in range(2, 21)
++                              if date(2023, 1, d).weekday() < 5]})
++        diag = flagging_diagnostics(table)
++        incidents = rank_incidents(table, frame, return_threshold=1.5)
++        assert diag["candidates"] == len(incidents)
++
++    def test_empty_table_returns_zeroed_dict_with_all_keys(self):
++        diag = flagging_diagnostics(pd.DataFrame())
++        assert diag == {
++            "trading_days": 0, "days_with_news": 0, "thin_baseline": False,
++            "candidates": 0, "coverage_only": 0, "return_only": 0,
++            "no_coverage_big_move": 0, "routine": 0,
++        }
++
++    def test_thin_baseline_forces_any_coverage_to_count_as_unusual(self):
++        """Below MIN_DAYS_FOR_BASELINE, a single ordinary story is enough to
++        clear the (relaxed) coverage bar, same relaxation rank_incidents applies."""
++        days = [date(2023, 1, d) for d in (23, 24, 25, 27, 30)]
++        frame = price_frame({
++            days[0]: (0.005, 0.004), days[1]: (0.002, 0.003),
++            days[2]: (-0.20, -0.01), days[3]: (-0.02, -0.015), days[4]: (0.01, 0.005),
++        })
++        news = [item(days[2], -0.9, url=f"n{i}", event="regulatory") for i in range(6)]
++        news.append(item(days[0], 0.1, url="quiet"))
++        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
++        diag = flagging_diagnostics(table, return_threshold=1.0)
++        assert diag["thin_baseline"] is True
++        assert diag["candidates"] == 1
++        # days[0]'s single quiet story clears the relaxed bar but the move
++        # doesn't, so it lands in coverage_only rather than routine.
++        assert diag["coverage_only"] == 1
++
++    def test_all_routine_when_nothing_is_unusual(self):
++        """Uniform coverage and returns across a window long enough (>=
++        MIN_DAYS_FOR_BASELINE) that the real z-test applies rather than the
++        thin-baseline relaxation - identical days give every z-score 0.0,
++        clearing neither bar, so every day should land as routine."""
++        days = [date(2023, 1, d) for d in range(2, 21) if date(2023, 1, d).weekday() < 5]
++        frame = price_frame({d: (0.001, 0.0008) for d in days})
++        news = [item(d, 0.0, url=f"{d}") for d in days]
++        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
++        diag = flagging_diagnostics(table, return_threshold=1.5)
++        assert diag["thin_baseline"] is False
++        assert diag["candidates"] == 0
++        assert diag["routine"] == diag["trading_days"]
+diff --git a/tests/test_narrative.py b/tests/test_narrative.py
+new file mode 100644
+index 0000000..bd595b4
+--- /dev/null
++++ b/tests/test_narrative.py
+@@ -0,0 +1,267 @@
++"""Tests for template-based narrative generation.
++
++Covers the pieces that are not exercised end-to-end by test_report.py:
++_drop_explanation() (why the rest of the window's days aren't candidates),
++_significance_paragraph() (how much to trust the top candidate, without
++overselling the z-score as a normal-tail probability), the per-category
++mechanism paragraph in incident_narrative(), and the enriched opening of
++summary_narrative().
++"""
++
++from __future__ import annotations
++
++import sys
++from datetime import date
++from pathlib import Path
++
++import pytest
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from ceia.eventstudy import Incident  # noqa: E402
++from ceia.narrative import (  # noqa: E402
++    _drop_explanation,
++    _significance_paragraph,
++    incident_narrative,
++    summary_narrative,
++)
++
++
++def make_incident(**kwargs) -> Incident:
++    defaults = dict(
++        day=date(2023, 1, 25), abnormal_return=-0.1323, abnormal_return_z=-12.53,
++        raw_return=-0.1379, benchmark_return=-0.0049, coverage_z=1.2,
++        sentiment_z=-1.1, item_count=3, mean_sentiment=-0.42,
++        dominant_event="regulatory", dominant_emotion="fear",
++        volume=8_200_000.0, volume_z=2.4, score=19.1,
++        direction_agrees=True,
++        car={"car": -0.3034, "days": 5, "start": "2023-01-24",
++             "end": "2023-01-30", "t_stat": -12.84, "truncated": False, "note": ""},
++        headlines=[], sources=["business_line", "financial_express"],
++    )
++    defaults.update(kwargs)
++    return Incident(**defaults)
++
++
++class TestIncidentMechanismParagraph:
++    """incident_narrative()'s new paragraph explaining *why* a category of
++    news is the kind that plausibly moves a price, distinct from claiming
++    this specific article did."""
++
++    def test_known_category_gets_a_mechanism_paragraph(self):
++        incident = make_incident(dominant_event="regulatory")
++        paragraphs = incident_narrative(incident, "Testco", "*NSEI", (-1, 3))
++        assert any("tail risk" in p for p in paragraphs)
++
++    def test_mechanism_paragraph_is_hedged_not_a_claim_about_this_article(self):
++        incident = make_incident(dominant_event="earnings")
++        paragraphs = incident_narrative(incident, "Testco", "*NSEI", (-1, 3))
++        mechanism = next(p for p in paragraphs if "near-term profitability" in p)
++        # It describes the category's general mechanism, not this incident.
++        assert "Testco" not in mechanism
++
++    def test_other_category_still_gets_a_hedge_paragraph(self):
++        incident = make_incident(dominant_event="other")
++        paragraphs = incident_narrative(incident, "Testco", "*NSEI", (-1, 3))
++        assert any("did not match one of the categories above" in p for p in paragraphs)
++
++    def test_untagged_category_gets_no_mechanism_paragraph(self):
++        """dominant_event == "" (nothing tagged at all) is distinct from
++        "other" (tagged, but none of the known mechanisms fit)."""
++        tagged = incident_narrative(make_incident(dominant_event="other"),
++                                    "Testco", "*NSEI", (-1, 3))
++        untagged = incident_narrative(make_incident(dominant_event=""),
++                                      "Testco", "*NSEI", (-1, 3))
++        assert len(untagged) == len(tagged) - 1
++
++    def test_every_tag_event_category_has_a_mechanism_entry(self):
++        """ceia.sentiment.tag_event()'s categories must all be covered, or a
++        real report would silently drop the paragraph for that category."""
++        from ceia.narrative import _EVENT_MECHANISM
++        for category in ("earnings", "regulatory", "leadership", "litigation",
++                         "mna", "capital", "product", "macro", "other"):
++            assert category in _EVENT_MECHANISM
++
++
++class TestDropExplanation:
++    def test_no_diagnostics_returns_empty_string(self):
++        assert _drop_explanation(None, candidates=1) == ""
++
++    def test_diagnostics_missing_trading_days_returns_empty_string(self):
++        assert _drop_explanation({}, candidates=0) == ""
++
++    def test_nothing_dropped_returns_empty_string(self):
++        diag = {"trading_days": 3, "candidates": 3, "coverage_only": 0,
++                "return_only": 0, "no_coverage_big_move": 0, "routine": 0}
++        assert _drop_explanation(diag, candidates=3) == ""
++
++    def test_reports_real_counts_for_each_bucket(self):
++        diag = {
++            "trading_days": 15, "candidates": 1, "coverage_only": 1,
++            "return_only": 1, "no_coverage_big_move": 1, "routine": 11,
++        }
++        text = _drop_explanation(diag, candidates=1)
++        assert "14 trading days" in text
++        assert "1 day had busy or strongly-toned coverage without a matching" in text
++        assert "1 day moved unusually without correspondingly unusual coverage" in text
++        assert "11 days were routine on both counts" in text
++
++    def test_no_coverage_big_move_is_flagged_as_a_real_gap(self):
++        diag = {
++            "trading_days": 2, "candidates": 0, "coverage_only": 0,
++            "return_only": 0, "no_coverage_big_move": 1, "routine": 1,
++        }
++        text = _drop_explanation(diag, candidates=0)
++        assert "<strong>no coverage collected for it at all</strong>" in text
++        assert "a real gap, not a finding" in text
++
++    def test_explains_the_two_bar_rule(self):
++        diag = {
++            "trading_days": 2, "candidates": 0, "coverage_only": 1,
++            "return_only": 0, "no_coverage_big_move": 0, "routine": 1,
++        }
++        text = _drop_explanation(diag, candidates=0)
++        assert "unusual coverage <em>and</em> an unusual price move" in text
++
++
++class TestSignificanceParagraph:
++    def test_states_the_z_score_magnitude(self):
++        top = make_incident(abnormal_return_z=-12.53, car={})
++        text = _significance_paragraph(top, robustness=None)
++        assert "12.5 standard deviations" in text
++
++    def test_never_states_a_normal_tail_probability(self):
++        """The z-score's normality assumption is exactly what the
++        permutation test exists to sidestep - restating it as "1 in X" here
++        would oversell a number the rest of the codebase declines to trust."""
++        top = make_incident(abnormal_return_z=-12.53, car={})
++        text = _significance_paragraph(top, robustness=None)
++        assert "1 in" not in text
++        assert "chance" not in text
++
++    def test_permutation_clause_appears_when_p_value_present(self):
++        top = make_incident(car={"p_value": 0.007, "n": 5000})
++        text = _significance_paragraph(top, robustness=None)
++        assert "permutation test" in text
++        assert "5,000 random comparable-length windows" in text
++        assert "0.7%" in text
++        assert "p = 0.007" in text
++
++    def test_permutation_clause_absent_when_p_value_is_none(self):
++        top = make_incident(car={"p_value": None, "n": 0})
++        text = _significance_paragraph(top, robustness=None)
++        assert "permutation test" not in text
++
++    def test_robustness_clause_appears_when_data_present_for_that_day(self):
++        top = make_incident(day=date(2023, 1, 25), car={})
++        robustness = {"days": {"2023-01-25": {"flagged_in": 7, "of": 9}}}
++        text = _significance_paragraph(top, robustness)
++        assert "7 of 9 combinations" in text
++
++    def test_robustness_clause_absent_when_day_not_in_robustness_data(self):
++        top = make_incident(day=date(2023, 1, 25), car={})
++        robustness = {"days": {"2023-02-01": {"flagged_in": 9, "of": 9}}}
++        text = _significance_paragraph(top, robustness)
++        assert "combinations" not in text
++
++    def test_robustness_clause_absent_when_robustness_is_none(self):
++        top = make_incident(day=date(2023, 1, 25), car={})
++        assert "combinations" not in _significance_paragraph(top, None)
++
++
++class TestSummaryNarrativeOpening:
++    """The non-causal disclaimer moved here from the deleted "what this
++    report is, and is not" box - it must survive verbatim, since it's the
++    single most load-bearing integrity statement in the report."""
++
++    def test_states_non_causation_in_the_opening_paragraph(self):
++        paragraphs = summary_narrative(
++            "Testco", "TEST.NS", "*NSEI", date(2023, 1, 1), date(2023, 2, 1),
++            [], daily_rows=20, news_count=10, model_kind="market-model")
++        assert "coincided with" in paragraphs[0]
++        assert "Coincidence in time is not evidence" in paragraphs[0]
++
++    def test_market_model_wording_used_when_a_beta_was_fitted(self):
++        paragraphs = summary_narrative(
++            "Testco", "TEST.NS", "*NSEI", date(2023, 1, 1), date(2023, 2, 1),
++            [], daily_rows=20, news_count=10, model_kind="market-model")
++        assert "market model fitted on price history" in paragraphs[1]
++
++    def test_market_adjusted_wording_used_when_beta_was_assumed(self):
++        paragraphs = summary_narrative(
++            "Testco", "TEST.NS", "*NSEI", date(2023, 1, 1), date(2023, 2, 1),
++            [], daily_rows=20, news_count=10, model_kind="market-adjusted")
++        assert "assumed to move one-for-one with the index" in paragraphs[1]
++
++    def test_thin_baseline_weight_note_appears(self):
++        diagnostics = {"trading_days": 5, "days_with_news": 2, "thin_baseline": True,
++                       "candidates": 0, "coverage_only": 0, "return_only": 0,
++                       "no_coverage_big_move": 0, "routine": 5}
++        paragraphs = summary_narrative(
++            "Testco", "TEST.NS", "*NSEI", date(2023, 1, 1), date(2023, 2, 1),
++            [], daily_rows=5, news_count=2, model_kind="market-model",
++            diagnostics=diagnostics)
++        weight_para = next(p for p in paragraphs if p.startswith("How much weight"))
++        assert "too few to judge which days were unusually" in weight_para
++
++    def test_weak_scale_note_appears(self):
++        paragraphs = summary_narrative(
++            "Testco", "TEST.NS", "*NSEI", date(2023, 1, 1), date(2023, 2, 1),
++            [], daily_rows=20, news_count=10, model_kind="market-model",
++            weak_scale=True)
++        weight_para = next(p for p in paragraphs if p.startswith("How much weight"))
++        assert "understates how unusual the largest moves" in weight_para
++
++    def test_no_weight_note_when_nothing_is_weak(self):
++        paragraphs = summary_narrative(
++            "Testco", "TEST.NS", "*NSEI", date(2023, 1, 1), date(2023, 2, 1),
++            [], daily_rows=20, news_count=10, model_kind="market-model")
++        assert not any(p.startswith("How much weight") for p in paragraphs)
++
++
++class TestSummaryNarrativeNoIncidents:
++    def test_states_no_day_met_both_tests(self):
++        paragraphs = summary_narrative(
++            "Testco", "TEST.NS", "*NSEI", date(2023, 1, 1), date(2023, 2, 1),
++            [], daily_rows=20, news_count=10, model_kind="market-model")
++        assert any("no day met both tests" in p for p in paragraphs)
++
++    def test_drop_explanation_included_when_diagnostics_show_dropped_days(self):
++        diagnostics = {"trading_days": 5, "days_with_news": 5, "thin_baseline": False,
++                       "candidates": 0, "coverage_only": 2, "return_only": 1,
++                       "no_coverage_big_move": 0, "routine": 2}
++        paragraphs = summary_narrative(
++            "Testco", "TEST.NS", "*NSEI", date(2023, 1, 1), date(2023, 2, 1),
++            [], daily_rows=5, news_count=10, model_kind="market-model",
++            diagnostics=diagnostics)
++        assert any("did not clear both bars at once" in p for p in paragraphs)
++
++
++class TestSummaryNarrativeWithIncidents:
++    def test_reports_candidate_count_and_top_day(self):
++        top = make_incident(day=date(2023, 1, 27), abnormal_return=-0.15, car={})
++        paragraphs = summary_narrative(
++            "Testco", "TEST.NS", "*NSEI", date(2023, 1, 1), date(2023, 2, 1),
++            [top], daily_rows=20, news_count=10, model_kind="market-model")
++        assert any("1 candidate day" in p for p in paragraphs)
++        assert any("27 January 2023" in p for p in paragraphs)
++
++    def test_significance_paragraph_is_included(self):
++        top = make_incident(abnormal_return_z=-9.0, car={"p_value": 0.02, "n": 1000})
++        paragraphs = summary_narrative(
++            "Testco", "TEST.NS", "*NSEI", date(2023, 1, 1), date(2023, 2, 1),
++            [top], daily_rows=20, news_count=10, model_kind="market-model")
++        assert any("permutation test" in p for p in paragraphs)
++
++    def test_agreement_sentence_only_appears_with_multiple_incidents(self):
++        one = [make_incident(day=date(2023, 1, 27), car={})]
++        two = [make_incident(day=date(2023, 1, 27), car={}, direction_agrees=True),
++               make_incident(day=date(2023, 1, 30), car={}, direction_agrees=False)]
++        single_paras = summary_narrative(
++            "Testco", "TEST.NS", "*NSEI", date(2023, 1, 1), date(2023, 2, 1),
++            one, daily_rows=20, news_count=10, model_kind="market-model")
++        multi_paras = summary_narrative(
++            "Testco", "TEST.NS", "*NSEI", date(2023, 1, 1), date(2023, 2, 1),
++            two, daily_rows=20, news_count=10, model_kind="market-model")
++        assert not any("flagged days" in p for p in single_paras)
++        assert any("Of the 2 flagged days, 1 showed" in p for p in multi_paras)
+diff --git a/tests/test_report.py b/tests/test_report.py
+index f0ec0f4..52391f1 100644
+--- a/tests/test_report.py
++++ b/tests/test_report.py
+@@ -45,7 +45,12 @@ def make_incident(**kwargs) -> Incident:
+         direction_agrees=True,
+         car={"car": -0.3034, "days": 5, "start": "2023-01-24",
+              "end": "2023-01-30", "t_stat": -12.84, "truncated": False, "note": ""},
+-        headlines=["[business_line] Adani shares tank (negative, rel=1.00)"],
++        headlines=[{
++            "source": "business_line", "headline": "Adani shares tank",
++            "url": "https://www.thehindubusinessline.com/adani-shares-tank/",
++            "sentiment_label": "negative", "relevance": 1.00,
++            "summary": "Adani group shares fell sharply after the report's allegations.",
++        }],
+         sources=["business_line", "financial_express"],
+     )
+     defaults.update(kwargs)
+@@ -269,11 +274,55 @@ class TestCharts:
+         svg = timeline_svg(make_analysis().daily, set(), "X", "^NSEI")
+         assert svg.count('fill="url(#neg-hatch)"') == 2
+ 
++    def test_badge_has_an_always_visible_dated_label(self):
++        """SVG <title> tooltips don't render in PDF/print/screenshot contexts,
++        so the date must be a real visible text element, not just a hover."""
++        incident = make_incident(day=date(2023, 1, 25))
++        svg = timeline_svg(make_analysis().daily, {date(2023, 1, 25)}, "X", "^NSEI",
++                           incidents=[incident])
++        assert 'class="badge-date"' in svg
++        assert 'class="badge-date-bg"' in svg
++        assert ">25 Jan<" in svg
++
++    def test_caption_explains_the_badges_when_incidents_are_present(self):
++        incident = make_incident(day=date(2023, 1, 25))
++        svg = timeline_svg(make_analysis().daily, {date(2023, 1, 25)}, "X", "^NSEI",
++                           incidents=[incident])
++        assert 'class="chart-caption"' in svg
++        assert "Numbered circles mark the ranked candidate incident days" in svg
++
++    def test_no_caption_or_badge_markup_when_incidents_list_is_empty(self):
++        svg = timeline_svg(make_analysis().daily, {date(2023, 1, 25)}, "X", "^NSEI",
++                           incidents=[])
++        assert 'class="chart-caption"' not in svg
++        assert 'class="badge-date"' not in svg
++
++    def test_no_caption_or_badge_markup_when_incidents_not_passed(self):
++        svg = timeline_svg(make_analysis().daily, {date(2023, 1, 25)}, "X", "^NSEI")
++        assert 'class="chart-caption"' not in svg
++        assert 'class="badge-date"' not in svg
++
++    def test_multiple_badges_each_get_their_own_date_label(self):
++        days = pd.to_datetime(["2023-01-24", "2023-01-25", "2023-01-27"])
++        frame = make_analysis().daily
++        incidents = [make_incident(day=date(2023, 1, 25)),
++                    make_incident(day=date(2023, 1, 27))]
++        svg = timeline_svg(frame, {date(2023, 1, 25), date(2023, 1, 27)},
++                           "X", "^NSEI", incidents=incidents)
++        assert ">25 Jan<" in svg
++        assert ">27 Jan<" in svg
++        assert svg.count('class="badge-date-bg"') == 2
++
+ 
+ class TestHtmlReport:
+     def test_is_self_contained(self):
++        """No external *dependency* the page needs in order to render or
++        function offline (stylesheet, script, image, font). A citation link
++        to a source article (<a href>) is not a rendering dependency - the
++        page is still one self-contained file without it ever resolving."""
+         html = build_html(make_analysis())
+-        assert not re.search(r'(?:src|href)="https?://', html), "external asset"
++        assert not re.search(r'<link[^>]+href="https?://', html), "external stylesheet/font"
++        assert not re.search(r'<(?:script|img)[^>]+src="https?://', html), "external script/image"
+         assert "@import" not in html
+         assert "<script" not in html.lower(), "no scripts needed"
+ 
+@@ -303,7 +352,7 @@ class TestHtmlReport:
+         }
+         html = build_html(analysis)
+         assert "9/9" in html
+-        assert "Threshold robustness" in html
++        assert "Robust" in html
+ 
+     def test_missing_robustness_does_not_crash(self):
+         """FakeAnalysis in these tests has no robustness attribute at all;
+@@ -312,8 +361,13 @@ class TestHtmlReport:
+         assert "<svg" in html
+ 
+     def test_limitations_appear_before_findings(self):
++        """PRD Success Metric #3: a reader must hit the non-causation
++        framing before the findings, not after. It now opens the Summary
++        itself (see summary_narrative) rather than living in a separate box
++        a reader could skip past - so it must still land before the
++        candidate-incident findings."""
+         html = build_html(make_analysis())
+-        warning = html.index("What this report is, and is not")
++        warning = html.index("coincided with")
+         findings = html.index("Candidate incident days")
+         assert warning < findings, "limitations must precede findings"
+ 
+@@ -323,14 +377,25 @@ class TestHtmlReport:
+         assert "not evidence that an article caused a price move" in html
+         assert "not investment advice" in html
+ 
+-    def test_caveats_are_rendered(self):
++    def test_no_longer_renders_the_removed_sections(self):
++        """These two sections were deliberately removed: their content had
++        already been presented elsewhere (README, this project's docs), and
++        repeating a full methodology dump on every single generated report
++        was judged not worth the length. This is a regression guard, not a
++        preference - if either heading comes back, it should be a deliberate
++        re-add, not an accidental one."""
+         html = build_html(make_analysis())
+-        assert "structured case study" in html
++        assert "What this report is, and is not" not in html
++        assert "<h2>Method and provenance</h2>" not in html
++        assert "<h3>Source availability</h3>" not in html
+ 
+     def test_escapes_hostile_headline_text(self):
+         """Headlines come from scraped pages and are untrusted input."""
+         nasty = '<img src=x onerror="alert(1)"> & "quoted"'
+-        analysis = make_analysis(incidents=[make_incident(headlines=[nasty])])
++        analysis = make_analysis(incidents=[make_incident(
++            headlines=[{"headline": nasty, "source": "et", "url": "",
++                       "sentiment_label": "negative", "relevance": 0.9,
++                       "summary": ""}])])
+         html = build_html(analysis)
+         assert "<img src=x" not in html
+         assert "&lt;img" in html
+@@ -353,26 +418,12 @@ class TestHtmlReport:
+         assert "could not be placed on a trading day" in html
+         assert "No timestamp story" in html
+ 
+-    def test_disabled_sources_reported(self):
+-        html = build_html(make_analysis())
+-        assert "business_standard" in html
+-        assert "DISABLED" in html
+-
+-    def test_after_close_count_explained(self):
+-        html = build_html(make_analysis())
+-        assert "15:30 IST close" in html
+-        assert "13 of the collected items fell after the close" in html
+-
+-    def test_finbert_disclosed(self):
+-        assert "FinBERT" in build_html(make_analysis())
+-
+-    def test_goemotions_disclosed_as_secondary_and_not_finance_tuned(self):
++    def test_after_close_count_appears_in_the_stats_grid(self):
++        """The explanatory sentence lived in the now-removed Method and
++        provenance section; the underlying number is still surfaced in the
++        stats grid at the top of the report."""
+         html = build_html(make_analysis())
+-        assert "GoEmotions" in html
+-        assert "not</strong> a\nfinance-tuned model" in html or \
+-            "not</strong> a finance-tuned model" in html
+-        assert "never affects relevance, incident\nflagging" in html or \
+-            "never affects relevance, incident flagging" in html
++        assert '<div class="k">Published after close</div><div class="v">13</div>' in html
+ 
+     def test_incident_card_shows_emotion_tag_when_present(self):
+         html = build_html(make_analysis(incidents=[make_incident(dominant_emotion="fear")]))
+@@ -424,24 +475,3 @@ class TestTimestampIndexHandling:
+         assert "bar-incident" in svg
+ 
+ 
+-class TestModelNotePunctuation:
+-    """model_note values from returns.py have no terminal punctuation, and ran
+-    straight into "Prices came from..." with no separator. A real user's
+-    report showed: "fitted on 120 trading days before 2023-01-20 Prices came
+-    from yfinance..." with no full stop between them.
+-    """
+-
+-    def test_period_added_when_missing(self):
+-        from ceia.report import _sentence
+-        assert _sentence("fitted on 120 trading days before 2023-01-20") == \
+-            "fitted on 120 trading days before 2023-01-20."
+-
+-    def test_existing_punctuation_not_doubled(self):
+-        from ceia.report import _sentence
+-        assert _sentence("already ends with a period.") == "already ends with a period."
+-        assert _sentence("ends with a question?") == "ends with a question?"
+-
+-    def test_appears_correctly_in_the_report(self):
+-        html = build_html(make_analysis())
+-        assert "days\nPrices came from" not in html  # old bug shape: no period
+-        assert "fitted on 120 days.\nPrices came from" in html
+-- 
+2.43.0
+
