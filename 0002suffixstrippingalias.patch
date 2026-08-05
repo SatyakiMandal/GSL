@@ -1,0 +1,253 @@
+From 71c16a90bde6528469838360c35333da75e29e09 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 5 Aug 2026 13:56:53 +0000
+Subject: [PATCH] Auto-derive a suffix-stripped alias so a run doesn't depend
+ on the user supplying one
+
+A real run for Sonata Software Limited over a 7-month window came back with
+zero relevant items despite genuine, easy-to-find coverage (Q4 results, a
+CEO change, a 10% single-day price jump) existing in that window. The cause:
+the only aliases in play were the company name exactly as typed - "Sonata
+Software Limited" - and an unrelated user-supplied guess. Both the relevance
+scorer and the slug pre-filter match on literal alias text, and Indian
+financial headlines essentially never write out the full legal suffix; they
+say "Sonata Software," not "Sonata Software Limited." Verified directly:
+scoring a paragraph saturated with "Sonata Software" mentions against the
+alias "Sonata Software Limited" alone returns 0.0, "no alias match"; adding
+the suffix-stripped "Sonata Software" scores it 0.86.
+
+RunConfig.all_aliases now always tries a version of the company name with a
+trailing corporate suffix removed (Limited, Ltd, Pvt Ltd, Private Limited,
+Inc, Corp, Corporation, Co, Company, LLC, PLC), so a run does not silently
+depend on the user remembering to supply a short form by hand - every
+existing README example command already does this manually
+(--alias Adani --alias "Adani Group" --alias AEL), which is exactly what
+happened not to occur here.
+
+Adds ceia/models.py:_strip_corporate_suffix with direct unit tests, tests
+for the all_aliases integration (including that names with no suffix are
+unaffected), and an end-to-end regression test reproducing the exact Sonata
+Software case through the real relevance scorer. 378 tests passing, up from
+366.
+---
+ README.md            | 28 +++++++++++++--
+ ceia/models.py       | 41 ++++++++++++++++++++-
+ tests/test_models.py | 84 +++++++++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 149 insertions(+), 4 deletions(-)
+
+diff --git a/README.md b/README.md
+index 70f7a40..ea0db7e 100644
+--- a/README.md
++++ b/README.md
+@@ -16,7 +16,7 @@ It is a structured case study generator, not a trading signal and not proof of
+ causation. See [Limitations](#limitations).
+ 
+ **Status: complete and verified on real data.** All four phases, a GUI on top,
+-366 tests
++378 tests
+ passing, and PRD Success Metric #2 — a known incident correctly flagged with
+ the abnormal-return direction matching sentiment — is met. `yfinance` could
+ not be reached from the build sandbox (a TLS-terminating proxy broke it), so
+@@ -123,7 +123,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
+ `pip install`, which is why it's not in `.[all]`).
+ 
+ ```bash
+-pytest -q     # 366 tests, no network required
++pytest -q     # 378 tests, no network required
+ ```
+ 
+ ### Run the spike
+@@ -298,6 +298,30 @@ which rules out a bare "tata" while staying tolerant of which two words a
+ headline kept. Re-run against the same probe: 99 candidates → 3, with zero
+ loss against the 7 already-confirmed-relevant articles from a real run.
+ 
++**A real bug a live run caught: the full legal company name matches almost
++nothing in ordinary press text.** A run for Sonata Software Limited over a
++7-month window came back with **zero** relevant items — `relevant: 0` out of
++10 candidates that even survived the slug pre-filter — despite genuine,
++easy-to-find coverage (Q4 results, a CEO change, a 10% single-day price
++jump) existing in that window. The cause: the only aliases in play were the
++company name exactly as typed, `"Sonata Software Limited"`, and an unrelated
++user-supplied guess, `"SONATASOF"`. Both `relevance.py`'s scoring and the
++slug pre-filter above match on the literal alias text, and Indian financial
++headlines essentially never write out the full legal suffix — they say
++"Sonata Software," not "Sonata Software Limited." Verified directly: scoring
++a paragraph saturated with "Sonata Software" mentions against the alias
++`"Sonata Software Limited"` alone returns `0.0`, "no alias match"; adding
++the suffix-stripped `"Sonata Software"` scores it `0.86`. Every example
++command in this README works around this by hand-supplying a short alias
++(`--alias Adani --alias "Adani Group" --alias AEL`), which is exactly what
++silently failed to happen here. Fixed at the source rather than by
++documentation alone: `RunConfig.all_aliases`
++(`ceia/models.py:_strip_corporate_suffix`) now always tries a version of the
++company name with a trailing corporate suffix removed — Limited, Ltd, Pvt
++Ltd, Private Limited, Inc, Corp, Corporation, Co, Company, LLC, PLC — so a
++run does not depend on the user remembering to add one by hand. A company
++name with no such suffix (`"Adani Enterprises"`, `"Wipro"`) is unaffected.
++
+ **Round-robin across sources.** Candidates are interleaved before `--limit`
+ applies, so a capped run samples every source instead of spending its whole
+ budget on whichever ran first.
+diff --git a/ceia/models.py b/ceia/models.py
+index 807c011..a91a9d4 100644
+--- a/ceia/models.py
++++ b/ceia/models.py
+@@ -14,6 +14,39 @@ IST_OFFSET_HOURS = 5.5
+ MARKET_CLOSE_HOUR = 15
+ MARKET_CLOSE_MINUTE = 30
+ 
++# Longest/most specific first, so "XYZ Private Limited" strips to "XYZ"
++# rather than to "XYZ Private" by matching the bare "limited" suffix first.
++_CORPORATE_SUFFIXES = [
++    "private limited", "pvt ltd", "limited", "ltd",
++    "incorporated", "inc", "corporation", "corp", "company", "co", "llc", "plc",
++]
++
++
++def _strip_corporate_suffix(company: str) -> str | None:
++    """The company name with a trailing corporate suffix removed, or
++    ``None`` if it does not end in one of the known suffixes.
++
++    News headlines almost never carry the full legal suffix - the Indian
++    financial press writes "Sonata Software", not "Sonata Software
++    Limited" - so a run whose alias list is built only from the exact
++    company name can silently match nothing. Verified directly on a real
++    case: scoring a body saturated with "Sonata Software" mentions against
++    the alias "Sonata Software Limited" alone returns 0.0, "no alias
++    match"; adding the suffix-stripped "Sonata Software" scores it 0.86.
++    This is why ``RunConfig.all_aliases`` always tries a stripped form
++    rather than depending on the user to supply one by hand.
++    """
++    normalised = company.strip()
++    lowered = normalised.lower()
++    for suffix in _CORPORATE_SUFFIXES:
++        pattern = r"[\s,]+" + r"\.?\s+".join(re.escape(w) for w in suffix.split()) + r"\.?$"
++        match = re.search(pattern, lowered)
++        if match:
++            stripped = normalised[:match.start()].strip().rstrip(",")
++            if stripped:
++                return stripped
++    return None
++
+ 
+ @dataclass
+ class NewsItem:
+@@ -113,13 +146,19 @@ class RunConfig:
+ 
+     @property
+     def all_aliases(self) -> list[str]:
+-        """Company name plus user-supplied aliases, longest first.
++        """Company name plus user-supplied aliases, longest first, plus a
++        suffix-stripped short form of the company name (see
++        :func:`_strip_corporate_suffix`) so a run does not silently depend
++        on the user remembering to supply one by hand.
+ 
+         Longest-first matters so "Adani Enterprises" is preferred over "Adani"
+         when both match, which keeps the more specific alias in
+         ``matched_aliases``.
+         """
+         names = [self.company, *self.aliases]
++        short_form = _strip_corporate_suffix(self.company)
++        if short_form:
++            names.append(short_form)
+         seen, out = set(), []
+         for name in sorted(names, key=len, reverse=True):
+             key = name.lower().strip()
+diff --git a/tests/test_models.py b/tests/test_models.py
+index 79c1670..0b87429 100644
+--- a/tests/test_models.py
++++ b/tests/test_models.py
+@@ -17,7 +17,89 @@ import pytest
+ 
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ 
+-from ceia.models import RunConfig  # noqa: E402
++from ceia.models import RunConfig, _strip_corporate_suffix  # noqa: E402
++
++
++class TestStripCorporateSuffix:
++    """News headlines almost never carry a company's full legal suffix - the
++    Indian financial press writes "Sonata Software", not "Sonata Software
++    Limited" - so an alias list built only from the exact company name can
++    silently match nothing. This is the fix: derive a short form by default.
++    """
++
++    def test_strips_limited(self):
++        assert _strip_corporate_suffix("Sonata Software Limited") == "Sonata Software"
++
++    def test_strips_ltd_with_trailing_period(self):
++        assert _strip_corporate_suffix("Tata Consultancy Services Ltd.") == \
++            "Tata Consultancy Services"
++
++    def test_strips_private_limited_as_one_unit(self):
++        """Must not stop at the bare "Limited" suffix and leave "Private"
++        dangling on the end of the stripped name."""
++        assert _strip_corporate_suffix("ABC Private Limited") == "ABC"
++
++    def test_strips_pvt_ltd_abbreviation(self):
++        assert _strip_corporate_suffix("XYZ Pvt Ltd") == "XYZ"
++        assert _strip_corporate_suffix("XYZ Pvt. Ltd.") == "XYZ"
++
++    def test_strips_inc(self):
++        assert _strip_corporate_suffix("Infosys BPO Inc.") == "Infosys BPO"
++
++    def test_name_with_no_suffix_returns_none(self):
++        """Must not change existing behaviour for names that already work,
++        e.g. the validated "Adani Enterprises" case."""
++        assert _strip_corporate_suffix("Adani Enterprises") is None
++        assert _strip_corporate_suffix("Reliance Industries") is None
++        assert _strip_corporate_suffix("Wipro") is None
++
++    def test_bare_suffix_alone_returns_none(self):
++        """Stripping "Limited" down to "" would add a useless empty alias."""
++        assert _strip_corporate_suffix("Limited") is None
++
++    def test_suffix_only_matches_at_the_end(self):
++        """"Limited" appearing mid-name (an unusual but possible case) must
++        not be stripped from the middle."""
++        assert _strip_corporate_suffix("Limited Edition Motors") is None
++
++
++class TestRunConfigAllAliasesSuffixStripping:
++    def test_short_form_is_added_automatically(self):
++        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS")
++        assert "Sonata Software" in config.all_aliases
++
++    def test_short_form_does_not_duplicate_a_user_supplied_alias(self):
++        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS",
++                           aliases=["Sonata Software"])
++        lowered = [a.lower() for a in config.all_aliases]
++        assert lowered.count("sonata software") == 1
++
++    def test_no_extra_alias_when_company_name_has_no_suffix(self):
++        config = RunConfig(company="Adani Enterprises", ticker="ADANIENT.NS",
++                           aliases=["Adani", "AEL"])
++        assert config.all_aliases == ["Adani Enterprises", "Adani", "AEL"]
++
++    def test_the_real_case_this_was_built_for(self):
++        """Reproduces the exact run that missed all of Sonata Software's
++        coverage: the user's aliases were just the auto-included full legal
++        name plus a mismatched ticker guess, neither of which appears in
++        ordinary press text. Confirms the fix end-to-end through the real
++        relevance scorer, not just checking the alias list shape."""
++        from ceia.relevance import score_item
++
++        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS",
++                           aliases=["SONATASOF"])
++        headline = "Sonata Software Q4 results: Net profit rises 21.4% YoY"
++        body = ("Sonata Software delivered a resilient FY26 despite macroeconomic "
++                "challenges. Sonata Software shares jumped 10% after the results.")
++
++        before = score_item(headline, body, ["Sonata Software Limited", "SONATASOF"],
++                            ticker=config.ticker)
++        assert before.score == 0.0, "the original bug: nothing matched at all"
++
++        after = score_item(headline, body, config.all_aliases, ticker=config.ticker)
++        assert after.score >= 0.35, "the fix: the auto short form now matches"
++        assert "Sonata Software" in after.matched
+ 
+ 
+ class TestRunConfigDateValidation:
+-- 
+2.43.0
+
