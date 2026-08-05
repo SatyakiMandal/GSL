@@ -1,0 +1,802 @@
+{
+  "company": "IndusInd Bank",
+  "ticker": "INDUSINDBK.NS",
+  "benchmark": "^NSEI",
+  "start": "2025-03-01",
+  "end": "2025-03-31",
+  "event_window": [
+    -1,
+    3
+  ],
+  "prices": {
+    "ticker": "INDUSINDBK.NS",
+    "benchmark": "^NSEI",
+    "company_provider": "yfinance",
+    "benchmark_provider": "yfinance",
+    "lead_in_start": "2024-08-13",
+    "tail_end": "2025-04-21",
+    "rows_total": 169,
+    "rows_in_analysis_window": 19,
+    "model": "market-model",
+    "alpha": -0.0015092427834219352,
+    "beta": 1.1760946951915345,
+    "r_squared": 0.17632843620535676,
+    "estimation_observations": 120,
+    "model_note": "fitted on 120 trading days before 2025-03-01",
+    "ar_scale_source": "estimation-window residual SD",
+    "trading_days_in_window": 19
+  },
+  "news": {
+    "company": "IndusInd Bank",
+    "ticker": "INDUSINDBK.NS",
+    "benchmark": "^NSEI",
+    "start": "2025-03-01",
+    "end": "2025-03-31",
+    "aliases": [
+      "IndusInd Bank",
+      "IndusInd"
+    ],
+    "source_status": {
+      "economic_times": "ok: 15397 candidate URLs",
+      "moneycontrol": "ok: 9965 candidate URLs",
+      "financial_express": "ok: 4203 candidate URLs",
+      "business_today": "ok: 2246 candidate URLs",
+      "business_line": "ok: 3389 candidate URLs"
+    },
+    "disabled_sources": {
+      "business_standard": "Akamai edge returns 403 for all requests, including robots.txt; permission to crawl cannot be established."
+    },
+    "stats": {
+      "candidates_discovered": 35200,
+      "candidates_after_prefilter": 276,
+      "articles_parsed": 276,
+      "in_requested_window": 276,
+      "relevant": 265,
+      "dropped_by_relevance": 11,
+      "unique_after_dedupe": 257,
+      "duplicates": 8,
+      "paywalled": 5,
+      "missing_timestamp": 6,
+      "after_close": 80,
+      "unattributed": 6,
+      "fetch_error_robots": 0,
+      "fetch_error_http": 0,
+      "fetch_error_parse": 0,
+      "fetch_error_empty": 0
+    },
+    "per_source": {
+      "financial_express": 27,
+      "business_today": 49,
+      "economic_times": 73,
+      "moneycontrol": 70,
+      "business_line": 38
+    }
+  },
+  "caveats": [
+    "This is a structured case study, not a statistically validated causal finding. One company over one date range yields too few distinct incidents for the sentiment/abnormal-return relationship to carry statistical significance; a proper event study spans dozens of companies and events.",
+    "Flagged days are days on which unusual coverage COINCIDED WITH an unusual benchmark-adjusted return. Coincidence in time is not evidence that an article caused a price move.",
+    "1 flagged day(s) show a price move in the opposite direction to the coverage's tone. That is not necessarily an error: news can be already priced in, or the day's move driven by something the coverage did not capture."
+  ],
+  "sentiment_return_correlation": {
+    "n": 14,
+    "r": 0.5305,
+    "r_squared": 0.2814,
+    "note": "Pearson r over 14 news-carrying day(s) in this run; descriptive only, not a significance test, and not comparable across runs with different day counts."
+  },
+  "emotion_return_summary": {
+    "groups": {
+      "negative": {
+        "n_days": 2,
+        "mean_abnormal_return": -0.03589,
+        "mean_weighted_sentiment": -0.5209,
+        "labels_seen": [
+          "disappointment",
+          "disapproval"
+        ]
+      },
+      "ambiguous": {
+        "n_days": 6,
+        "mean_abnormal_return": -0.03833,
+        "mean_weighted_sentiment": -0.185,
+        "labels_seen": [
+          "confusion",
+          "curiosity"
+        ]
+      }
+    },
+    "note": "8 day(s) had a confident dominant emotion (GoEmotions, headline-only, secondary to FinBERT); grouped by the paper's own positive/negative/ambiguous clustering. Descriptive only \u2014 small day counts per group, and this never affects incident flagging or ranking."
+  },
+  "secondary_benchmark": {},
+  "threshold_robustness": {
+    "n_combos": 9,
+    "multipliers": [
+      0.7,
+      1.0,
+      1.3
+    ],
+    "days": {
+      "2025-03-11": {
+        "flagged_in": 9,
+        "of": 9,
+        "fraction": 1.0
+      },
+      "2025-03-12": {
+        "flagged_in": 9,
+        "of": 9,
+        "fraction": 1.0
+      },
+      "2025-03-24": {
+        "flagged_in": 9,
+        "of": 9,
+        "fraction": 1.0
+      }
+    },
+    "note": "each candidate day's flagging test re-run across 9 combinations of coverage/return z-thresholds (0.7x/1x/1.3x of the 1/1.5 configured values). A day flagged in all combinations is robust to the exact threshold chosen; one flagged in only the loosest combination is threshold-sensitive - treat it with more caution."
+  },
+  "flagging_diagnostics": {
+    "trading_days": 19,
+    "days_with_news": 14,
+    "thin_baseline": false,
+    "candidates": 3,
+    "coverage_only": 3,
+    "return_only": 3,
+    "no_coverage_big_move": 1,
+    "routine": 9
+  },
+  "unattributed_items": [
+    {
+      "url": "https://economictimes.indiatimes.com/mf/analysis/quant-mid-cap-fund-bought-rs-94-crore-worth-of-shares-of-indusind-bank-in-february-before-the-crash/articleshow/119200111.cms",
+      "source": "economic_times",
+      "headline": "Quant Mid Cap Fund bought Rs 94 crore worth of shares of IndusInd Bank in February, before the crash",
+      "reason": "missing"
+    },
+    {
+      "url": "https://economictimes.indiatimes.com/markets/stocks/news/stocks-to-buy-today-indusind-bank-gets-a-downgrade-antique-sees-26-upside-in-coromandel-international/articleshow/119099808.cms",
+      "source": "economic_times",
+      "headline": "Stocks to buy today: IndusInd Bank gets a downgrade; Antique sees 26% upside in Coromandel International",
+      "reason": "missing"
+    },
+    {
+      "url": "https://economictimes.indiatimes.com/mf/analysis/mutual-funds-sold-around-1-6-crore-indusind-bank-shares-in-february-before-the-crash/articleshow/118924136.cms",
+      "source": "economic_times",
+      "headline": "Mutual funds sold around 1.6 crore IndusInd Bank shares in February before the crash",
+      "reason": "missing"
+    },
+    {
+      "url": "https://economictimes.indiatimes.com/mf/analysis/which-mutual-funds-hold-highest-exposure-in-indusind-bank/articleshow/118880914.cms",
+      "source": "economic_times",
+      "headline": "Which mutual funds hold the largest stake in IndusInd Bank?",
+      "reason": "missing"
+    },
+    {
+      "url": "https://economictimes.indiatimes.com/mf/analysis/actively-managed-mfs-with-large-exposures-to-indusind-bank-shares/articleshow/118910589.cms",
+      "source": "economic_times",
+      "headline": "Actively-managed MFs with large exposures to IndusInd Bank shares",
+      "reason": "missing"
+    },
+    {
+      "url": "https://economictimes.indiatimes.com/markets/stocks/news/stocks-to-buy-today-indusind-bank-gets-a-downgrade-motilal-oswal-sees-over-20-upside-in-sun-pharma/articleshow/118872310.cms",
+      "source": "economic_times",
+      "headline": "Stocks to buy today: IndusInd Bank gets a downgrade; Motilal Oswal sees over 20% upside in Sun Pharma",
+      "reason": "missing"
+    }
+  ],
+  "daily": [
+    {
+      "date": "2025-03-03",
+      "close": 984.0,
+      "volume": 6158061.0,
+      "return": -0.0061609693,
+      "benchmark_return": -0.0002440005,
+      "expected_return": -0.0017962105,
+      "abnormal_return": -0.0043647589,
+      "abnormal_return_z": -0.2161548103,
+      "item_count": 0,
+      "unique_count": 0,
+      "mean_sentiment": 0.0,
+      "weighted_sentiment": 0.0,
+      "dominant_event": "",
+      "dominant_emotion": "",
+      "sources": "",
+      "coverage_z": -0.8995485998,
+      "sentiment_z": 0.0,
+      "volume_z": -0.538789535
+    },
+    {
+      "date": "2025-03-04",
+      "close": 987.5999755859,
+      "volume": 3271190.0,
+      "return": 0.0036585118,
+      "benchmark_return": -0.0016569416,
+      "expected_return": -0.0034579631,
+      "abnormal_return": 0.0071164748,
+      "abnormal_return_z": 0.3524273198,
+      "item_count": 0,
+      "unique_count": 0,
+      "mean_sentiment": 0.0,
+      "weighted_sentiment": 0.0,
+      "dominant_event": "",
+      "dominant_emotion": "",
+      "sources": "",
+      "coverage_z": -0.8995485998,
+      "sentiment_z": 0.0,
+      "volume_z": -0.6343597513
+    },
+    {
+      "date": "2025-03-05",
+      "close": 971.8499755859,
+      "volume": 3944062.0,
+      "return": -0.0159477525,
+      "benchmark_return": 0.0115316951,
+      "expected_return": 0.0120531226,
+      "abnormal_return": -0.0280008751,
+      "abnormal_return_z": -1.386680007,
+      "item_count": 0,
+      "unique_count": 0,
+      "mean_sentiment": 0.0,
+      "weighted_sentiment": 0.0,
+      "dominant_event": "",
+      "dominant_emotion": "",
+      "sources": "",
+      "coverage_z": -0.8995485998,
+      "sentiment_z": 0.0,
+      "volume_z": -0.6120842417
+    },
+    {
+      "date": "2025-03-06",
+      "close": 971.700012207,
+      "volume": 3928358.0,
+      "return": -0.0001543071,
+      "benchmark_return": 0.0092848478,
+      "expected_return": 0.0094106174,
+      "abnormal_return": -0.0095649246,
+      "abnormal_return_z": -0.4736812544,
+      "item_count": 0,
+      "unique_count": 0,
+      "mean_sentiment": 0.0,
+      "weighted_sentiment": 0.0,
+      "dominant_event": "",
+      "dominant_emotion": "",
+      "sources": "",
+      "coverage_z": -0.8995485998,
+      "sentiment_z": 0.0,
+      "volume_z": -0.6126041246
+    },
+    {
+      "date": "2025-03-07",
+      "close": 936.75,
+      "volume": 7737031.0,
+      "return": -0.0359679034,
+      "benchmark_return": 0.000346014,
+      "expected_return": -0.0011022976,
+      "abnormal_return": -0.0348656059,
+      "abnormal_return_z": -1.7266402694,
+      "item_count": 0,
+      "unique_count": 0,
+      "mean_sentiment": 0.0,
+      "weighted_sentiment": 0.0,
+      "dominant_event": "",
+      "dominant_emotion": "",
+      "sources": "",
+      "coverage_z": -0.8995485998,
+      "sentiment_z": 0.0,
+      "volume_z": -0.4865175407
+    },
+    {
+      "date": "2025-03-10",
+      "close": 900.5,
+      "volume": 16014401.0,
+      "return": -0.0386976248,
+      "benchmark_return": -0.0040882039,
+      "expected_return": -0.0063173577,
+      "abnormal_return": -0.032380267,
+      "abnormal_return_z": -1.6035594859,
+      "item_count": 20,
+      "unique_count": 19,
+      "mean_sentiment": -0.4411473684,
+      "weighted_sentiment": -0.4463784121,
+      "dominant_event": "regulatory",
+      "dominant_emotion": "disappointment",
+      "sources": "business_today,financial_express,business_line,moneycontrol,economic_times",
+      "coverage_z": 0.4205206869,
+      "sentiment_z": -0.7840135844,
+      "volume_z": -0.212494198
+    },
+    {
+      "date": "2025-03-11",
+      "close": 655.950012207,
+      "volume": 101075220.0,
+      "return": -0.2715713357,
+      "benchmark_return": 0.0016740475,
+      "expected_return": 0.0004595955,
+      "abnormal_return": -0.2720309312,
+      "abnormal_return_z": -13.4717165738,
+      "item_count": 45,
+      "unique_count": 45,
+      "mean_sentiment": -0.5813066667,
+      "weighted_sentiment": -0.5907916944,
+      "dominant_event": "earnings",
+      "dominant_emotion": "curiosity",
+      "sources": "financial_express,business_today,business_line,moneycontrol,economic_times",
+      "coverage_z": 2.2269312897,
+      "sentiment_z": -1.4471317582,
+      "volume_z": 2.6034545822
+    },
+    {
+      "date": "2025-03-12",
+      "close": 684.700012207,
+      "volume": 108682122.0,
+      "return": 0.0438295594,
+      "benchmark_return": -0.0012179088,
+      "expected_return": -0.0029416188,
+      "abnormal_return": 0.0467711782,
+      "abnormal_return_z": 2.3162368112,
+      "item_count": 44,
+      "unique_count": 43,
+      "mean_sentiment": -0.3954348837,
+      "weighted_sentiment": -0.411499862,
+      "dominant_event": "earnings",
+      "dominant_emotion": "curiosity",
+      "sources": "financial_express,business_today,business_line,moneycontrol,economic_times",
+      "coverage_z": 2.087976628,
+      "sentiment_z": -0.6238579528,
+      "volume_z": 2.855282
+    },
+    {
+      "date": "2025-03-13",
+      "close": 672.3499755859,
+      "volume": 31592987.0,
+      "return": -0.0180371497,
+      "benchmark_return": -0.0032620895,
+      "expected_return": -0.0053457689,
+      "abnormal_return": -0.0126913808,
+      "abnormal_return_z": -0.6285119284,
+      "item_count": 26,
+      "unique_count": 25,
+      "mean_sentiment": -0.125436,
+      "weighted_sentiment": -0.1501185182,
+      "dominant_event": "earnings",
+      "dominant_emotion": "confusion",
+      "sources": "financial_express,business_today,business_line,moneycontrol,economic_times",
+      "coverage_z": 0.8373846722,
+      "sentiment_z": 0.5763551894,
+      "volume_z": 0.3032367902
+    },
+    {
+      "date": "2025-03-17",
+      "close": 677.4000244141,
+      "volume": 22353102.0,
+      "return": 0.0075110419,
+      "benchmark_return": 0.0049805683,
+      "expected_return": 0.0043483772,
+      "abnormal_return": 0.0031626647,
+      "abnormal_return_z": 0.1566238142,
+      "item_count": 35,
+      "unique_count": 35,
+      "mean_sentiment": -0.0732542857,
+      "weighted_sentiment": -0.0631731797,
+      "dominant_event": "regulatory",
+      "dominant_emotion": "curiosity",
+      "sources": "financial_express,business_today,economic_times,business_line,moneycontrol",
+      "coverage_z": 1.532157981,
+      "sentiment_z": 0.9755915559,
+      "volume_z": -0.0026507289
+    },
+    {
+      "date": "2025-03-18",
+      "close": 677.4000244141,
+      "volume": 0.0,
+      "return": 0.0,
+      "benchmark_return": 0.014463299,
+      "expected_return": 0.0155009664,
+      "abnormal_return": -0.0155009664,
+      "abnormal_return_z": -0.7676503019,
+      "item_count": 14,
+      "unique_count": 14,
+      "mean_sentiment": 0.0041928571,
+      "weighted_sentiment": -0.0245280811,
+      "dominant_event": "regulatory",
+      "dominant_emotion": "curiosity",
+      "sources": "economic_times,moneycontrol,business_today,business_line",
+      "coverage_z": 0.0731340325,
+      "sentiment_z": 1.1530424578,
+      "volume_z": -0.742652895
+    },
+    {
+      "date": "2025-03-19",
+      "close": 692.700012207,
+      "volume": 11120576.0,
+      "return": 0.0225863408,
+      "benchmark_return": 0.0032100316,
+      "expected_return": 0.0022660584,
+      "abnormal_return": 0.0203202824,
+      "abnormal_return_z": 1.0063160227,
+      "item_count": 17,
+      "unique_count": 16,
+      "mean_sentiment": 0.10448125,
+      "weighted_sentiment": 0.1301983199,
+      "dominant_event": "regulatory",
+      "dominant_emotion": "curiosity",
+      "sources": "economic_times,moneycontrol,financial_express,business_line,business_today",
+      "coverage_z": 0.2120886943,
+      "sentiment_z": 1.8635165004,
+      "volume_z": -0.3745048711
+    },
+    {
+      "date": "2025-03-20",
+      "close": 684.0999755859,
+      "volume": 8918567.0,
+      "return": -0.0124152396,
+      "benchmark_return": 0.0123561956,
+      "expected_return": 0.0130228133,
+      "abnormal_return": -0.0254380529,
+      "abnormal_return_z": -1.2597620325,
+      "item_count": 4,
+      "unique_count": 4,
+      "mean_sentiment": -0.292225,
+      "weighted_sentiment": -0.308046314,
+      "dominant_event": "other",
+      "dominant_emotion": "",
+      "sources": "economic_times,moneycontrol,business_line",
+      "coverage_z": -0.6216392763,
+      "sentiment_z": -0.1488190457,
+      "volume_z": -0.4474026474
+    },
+    {
+      "date": "2025-03-21",
+      "close": 686.9000244141,
+      "volume": 14265415.0,
+      "return": 0.0040930404,
+      "benchmark_return": 0.006888552,
+      "expected_return": 0.0065923466,
+      "abnormal_return": -0.0024993062,
+      "abnormal_return_z": -0.1237724884,
+      "item_count": 5,
+      "unique_count": 5,
+      "mean_sentiment": -0.15546,
+      "weighted_sentiment": -0.1575048,
+      "dominant_event": "regulatory",
+      "dominant_emotion": "",
+      "sources": "economic_times,moneycontrol,business_line",
+      "coverage_z": -0.5521619454,
+      "sentiment_z": 0.542438796,
+      "volume_z": -0.2703945927
+    },
+    {
+      "date": "2025-03-24",
+      "close": 669.450012207,
+      "volume": 14649992.0,
+      "return": -0.0254040058,
+      "benchmark_return": 0.0131881772,
+      "expected_return": 0.0140013025,
+      "abnormal_return": -0.0394053083,
+      "abnormal_return_z": -1.9514587643,
+      "item_count": 12,
+      "unique_count": 11,
+      "mean_sentiment": -0.5816363636,
+      "weighted_sentiment": -0.5954908874,
+      "dominant_event": "regulatory",
+      "dominant_emotion": "disapproval",
+      "sources": "economic_times,moneycontrol,financial_express,business_line,business_today",
+      "coverage_z": -0.1352979601,
+      "sentiment_z": -1.4687095539,
+      "volume_z": -0.2576631243
+    },
+    {
+      "date": "2025-03-25",
+      "close": 637.049987793,
+      "volume": 18615476.0,
+      "return": -0.0483979742,
+      "benchmark_return": 0.0004353973,
+      "expected_return": -0.0009971743,
+      "abnormal_return": -0.0474007998,
+      "abnormal_return_z": -2.3474173986,
+      "item_count": 7,
+      "unique_count": 6,
+      "mean_sentiment": -0.3435833333,
+      "weighted_sentiment": -0.3403652695,
+      "dominant_event": "earnings",
+      "dominant_emotion": "",
+      "sources": "economic_times,moneycontrol,financial_express",
+      "coverage_z": -0.4826846145,
+      "sentiment_z": -0.2972215082,
+      "volume_z": -0.1263852931
+    },
+    {
+      "date": "2025-03-26",
+      "close": 655.299987793,
+      "volume": 23506399.0,
+      "return": 0.0286476734,
+      "benchmark_return": -0.0076810793,
+      "expected_return": -0.0105429194,
+      "abnormal_return": 0.0391905929,
+      "abnormal_return_z": 1.9408254673,
+      "item_count": 9,
+      "unique_count": 7,
+      "mean_sentiment": -0.1016285714,
+      "weighted_sentiment": -0.1357520422,
+      "dominant_event": "other",
+      "dominant_emotion": "",
+      "sources": "economic_times,moneycontrol,business_line,business_today",
+      "coverage_z": -0.4132072836,
+      "sentiment_z": 0.6423232995,
+      "volume_z": 0.0355293089
+    },
+    {
+      "date": "2025-03-27",
+      "close": 673.549987793,
+      "volume": 21589495.0,
+      "return": 0.0278498403,
+      "benchmark_return": 0.0044748279,
+      "expected_return": 0.0037535785,
+      "abnormal_return": 0.0240962617,
+      "abnormal_return_z": 1.1933128604,
+      "item_count": 7,
+      "unique_count": 7,
+      "mean_sentiment": -0.3026857143,
+      "weighted_sentiment": -0.2906303472,
+      "dominant_event": "other",
+      "dominant_emotion": "",
+      "sources": "economic_times,moneycontrol,business_today",
+      "coverage_z": -0.4132072836,
+      "sentiment_z": -0.0688482568,
+      "volume_z": -0.0279300317
+    },
+    {
+      "date": "2025-03-28",
+      "close": 649.8499755859,
+      "volume": 8807815.0,
+      "return": -0.0351867161,
+      "benchmark_return": -0.0030773044,
+      "expected_return": -0.0051284442,
+      "abnormal_return": -0.0300582719,
+      "abnormal_return_z": -1.48856793,
+      "item_count": 9,
+      "unique_count": 9,
+      "mean_sentiment": -0.4260111111,
+      "weighted_sentiment": -0.4748318085,
+      "dominant_event": "regulatory",
+      "dominant_emotion": "",
+      "sources": "moneycontrol,business_line,business_today",
+      "coverage_z": -0.2742526219,
+      "sentiment_z": -0.9146661389,
+      "volume_z": -0.4510691059
+    }
+  ],
+  "incidents": [
+    {
+      "day": "2025-03-11",
+      "abnormal_return": -0.2720309312431946,
+      "abnormal_return_z": -13.471716573829045,
+      "raw_return": -0.27157133569457936,
+      "benchmark_return": 0.0016740474556060647,
+      "coverage_z": 2.226931289736727,
+      "sentiment_z": -1.4471317582346637,
+      "item_count": 45,
+      "mean_sentiment": -0.5907916944117195,
+      "dominant_event": "earnings",
+      "dominant_emotion": "curiosity",
+      "volume": 101075220.0,
+      "volume_z": 2.603454582194956,
+      "score": 86.44422465529367,
+      "direction_agrees": true,
+      "car": {
+        "car": -0.2671687362153463,
+        "days": 5,
+        "start": "2025-03-10",
+        "end": "2025-03-17",
+        "t_stat": -5.91705059766345,
+        "truncated": false,
+        "note": "",
+        "p_value": 0.0,
+        "n": 153,
+        "p_value_note": "empirical p-value from 153 placebo window(s) of the same 5-day length, drawn from this company's own abnormal-return series (excluding other flagged days); deterministic (seed=42)."
+      },
+      "headlines": [
+        {
+          "source": "economic_times",
+          "headline": "IndusInd Bank sees net worth impacted by 2.35% after derivatives portfolio review",
+          "url": "https://economictimes.indiatimes.com/markets/stocks/news/indusind-bank-sees-adverse-impact-of-2-35-on-net-worth-following-derivatives-portfolio-review/articleshow/118853058.cms",
+          "sentiment_label": "negative",
+          "relevance": 0.92,
+          "summary": "IndusInd Bank's internal review has found discrepancies in its derivative portfolio, potentially impacting the bank's net worth by 2.35% by December 2024. This follows RBI's 2023 directions on derivatives. Although an external agency will verify findings, IndusInd Bank assures strong profitability to absorb the impact. Shares fell by 3.71% after the report."
+        },
+        {
+          "source": "moneycontrol",
+          "headline": "IndusInd Bank loses nearly Rs 80,000-crore m-cap from Jan 2024 peak; stock down 55% in 1 year: Key factors behind decline",
+          "url": "https://www.moneycontrol.com/news/business/markets/indusind-bank-loses-nearly-rs-80-000-crore-m-cap-from-jan-2024-peak-stock-down-55-in-1-year-here-s-why-12961895.html",
+          "sentiment_label": "negative",
+          "relevance": 0.97,
+          "summary": "Tuesday\u2019s fall marked the sharpest single-day drop in IndusInd Bank\u2019s history, with the stock briefly touching Rs 670, a level last seen on November 3, 2020"
+        },
+        {
+          "source": "moneycontrol",
+          "headline": "IndusInd Bank shares crash 27% as discrepancies in derivatives portfolio could impact profit by Rs 1,500 crore",
+          "url": "https://www.moneycontrol.com/news/business/stocks/indusind-bank-shares-in-focus-as-discrepancies-found-in-derivatives-portfolio-could-impact-profit-by-rs-1-500-crore-12961514.html",
+          "sentiment_label": "negative",
+          "relevance": 0.97,
+          "summary": "Brokerages cut their target price on IndusInd Bank shares on the recent CFO resignation, the CEO getting only a one-year extension instead of three, and a derivatives-induced dislocation."
+        },
+        {
+          "source": "business_line",
+          "headline": "Stock Market trim losses in mid-day trading, IndusInd Bank plunges 25%",
+          "url": "https://www.thehindubusinessline.com/markets/stock-markets/markets-trim-losses-in-mid-day-trading-indusind-bank-plunges-25/article69316407.ece",
+          "sentiment_label": "negative",
+          "relevance": 0.73,
+          "summary": "Equity benchmarks pared early losses in mid-day trading on Tuesday, though they remained in negative territory amid persistent global recession worries and volatile market conditions."
+        },
+        {
+          "source": "moneycontrol",
+          "headline": "Bankers fear strain on deposit mobilisation after IndusInd Bank derivative loss",
+          "url": "https://www.moneycontrol.com/news/business/bankers-fear-strain-on-deposit-mobilisation-after-indusind-bank-accounting-trouble-12961679.html",
+          "sentiment_label": "negative",
+          "relevance": 0.97,
+          "summary": "As the accounting discrepancy has come to light in March, a busy period for deposit mobilisation, it could hurt banks efforts to garner large deposits, bankers say"
+        }
+      ],
+      "sources": [
+        "financial_express",
+        "business_today",
+        "business_line",
+        "moneycontrol",
+        "economic_times"
+      ]
+    },
+    {
+      "day": "2025-03-12",
+      "abnormal_return": 0.046771178213901275,
+      "abnormal_return_z": 2.3162368111677325,
+      "raw_return": 0.043829559364236825,
+      "benchmark_return": -0.0012179087892316698,
+      "coverage_z": 2.0879766279797556,
+      "sentiment_z": -0.6238579527812811,
+      "item_count": 43,
+      "mean_sentiment": -0.4114998619827609,
+      "dominant_event": "earnings",
+      "dominant_emotion": "curiosity",
+      "volume": 108682122.0,
+      "volume_z": 2.855282000034609,
+      "score": 10.095731784771143,
+      "direction_agrees": false,
+      "car": {
+        "car": -0.25028943560670985,
+        "days": 5,
+        "start": "2025-03-11",
+        "end": "2025-03-18",
+        "t_stat": -5.543220645965919,
+        "truncated": false,
+        "note": "",
+        "p_value": 0.0,
+        "n": 153,
+        "p_value_note": "empirical p-value from 153 placebo window(s) of the same 5-day length, drawn from this company's own abnormal-return series (excluding other flagged days); deterministic (seed=42)."
+      },
+      "headlines": [
+        {
+          "source": "economic_times",
+          "headline": "LIC's holding value in IndusInd Bank falls by Rs 894 crore as stock falls 26%",
+          "url": "https://economictimes.indiatimes.com/markets/stocks/news/lics-holding-value-in-indusind-bank-falls-by-rs-894-crore-as-stock-falls-26/articleshow/118891159.cms",
+          "sentiment_label": "negative",
+          "relevance": 0.96,
+          "summary": "Life Insurance Corporations (LIC) holding in IndusInd Bank lost \u20b9894 crore in value after the banks stock fell 26% amid concerns over forex derivatives discrepancies. Following the disclosure, brokerages downgraded the stock, citing governance and earnings risks."
+        },
+        {
+          "source": "business_line",
+          "headline": "MFs see sharp erosion in value as IndusInd Bank shares hit new low",
+          "url": "https://www.thehindubusinessline.com/markets/stock-markets/mutual-funds-hit-hard-as-indusind-bank-shares-plummet-leading-to-significant-losses-for-investors-and-fund-managers/article69317443.ece",
+          "sentiment_label": "negative",
+          "relevance": 0.96,
+          "summary": "Mutual funds hit hard as IndusInd Bank shares plummet, leading to significant losses for investors and fund managers."
+        },
+        {
+          "source": "economic_times",
+          "headline": "IndusInd & Out: Rs 19,000 crore lost in a day",
+          "url": "https://economictimes.indiatimes.com/markets/stocks/news/indusind-out-rs-19000-crore-lost-in-a-day/articleshow/118909962.cms",
+          "sentiment_label": "negative",
+          "relevance": 0.88,
+          "summary": "The private bank on Monday said its net worth could take a 2.35% hit to the tune of roughly \u20b91,600 crore as of December 31 on account of underestimation of foreign exchange hedging costs. Analysts said these were internal foreign exchange derivatives based on the bank's forex borrowings and deposits."
+        },
+        {
+          "source": "business_line",
+          "headline": "Derivatives accounting hit: IndusInd Bank\u2019s stock loses about a quarter of its value in a single day",
+          "url": "https://www.thehindubusinessline.com/money-and-banking/derivatives-accounting-hit-indusind-banks-stock-loses-a-quarter-of-its-value-in-a-single-day/article69317761.ece",
+          "sentiment_label": "negative",
+          "relevance": 0.97,
+          "summary": "IndusInd Bank stock plunges 27.17% due to accounting discrepancies, CEO tenure extension, and microfinance asset quality concerns."
+        },
+        {
+          "source": "business_today",
+          "headline": "IndusInd Bank impact? Ashok Leyland, other Hinduja stocks lost Rs 21,000 cr in market value",
+          "url": "https://www.businesstoday.in/markets/stocks/story/indusind-bank-impact-ashok-leyland-other-hinduja-stocks-lost-rs-21000-cr-in-market-value-467561-2025-03-11",
+          "sentiment_label": "negative",
+          "relevance": 0.97,
+          "summary": "IndusInd Bank eventually closed the day at Rs 65725 on BSE down 2702 per cent This is the same level IndusInd Bank traded at in early November 2020 Ashok Leyland settled the day at Rs 200 down 324 per cent"
+        }
+      ],
+      "sources": [
+        "financial_express",
+        "business_today",
+        "business_line",
+        "moneycontrol",
+        "economic_times"
+      ]
+    },
+    {
+      "day": "2025-03-24",
+      "abnormal_return": -0.03940530830044921,
+      "abnormal_return_z": -1.9514587642734662,
+      "raw_return": -0.025404005804070873,
+      "benchmark_return": 0.013188177230298859,
+      "coverage_z": -0.13529796013178802,
+      "sentiment_z": -1.4687095539049966,
+      "item_count": 11,
+      "mean_sentiment": -0.5954908874382498,
+      "dominant_event": "regulatory",
+      "dominant_emotion": "disapproval",
+      "volume": 14649992.0,
+      "volume_z": -0.2576631242568007,
+      "score": 3.891918344512279,
+      "direction_agrees": true,
+      "car": {
+        "car": -0.026018559794671037,
+        "days": 5,
+        "start": "2025-03-21",
+        "end": "2025-03-27",
+        "t_stat": -0.5762393346027938,
+        "truncated": false,
+        "note": "",
+        "p_value": 0.3595,
+        "n": 153,
+        "p_value_note": "empirical p-value from 153 placebo window(s) of the same 5-day length, drawn from this company's own abnormal-return series (excluding other flagged days); deterministic (seed=42)."
+      },
+      "headlines": [
+        {
+          "source": "moneycontrol",
+          "headline": "IndusInd Bank chiefs urged to step down, sources say; bank denies report",
+          "url": "https://www.moneycontrol.com/news/business/indusind-bank-chiefs-to-exit-within-months-after-accounting-lapses-sources-say-12972015.html",
+          "sentiment_label": "negative",
+          "relevance": 0.95,
+          "summary": "The RBI made clear that it had lost confidence in the top executives, but that it wanted an orderly transition to avoid unnerving depositors, says report"
+        },
+        {
+          "source": "economic_times",
+          "headline": "'Factually incorrect': IndusInd Bank refutes media report on CEO, deputy stepping down after accounting la",
+          "url": "https://economictimes.indiatimes.com/industry/banking/finance/banking/factually-incorrect-indusind-bank-refutes-media-report-on-ceo-deputy-stepping-down-after-accounting-lapses/articleshow/119309307.cms",
+          "sentiment_label": "negative",
+          "relevance": 0.96,
+          "summary": "IndusInd Bank denies media reports suggesting the RBI asked its CEO and Deputy CEO to step down due to accounting issues. The bank, which revealed a significant overvaluation of its derivatives portfolio, has appointed external investigators to probe the matter. IndusInd asserts that the claims and information circulating are entirely inaccurate and misleading."
+        },
+        {
+          "source": "economic_times",
+          "headline": "IndusInd Bank CEO, deputy to exit within months after accounting lapses, sources say",
+          "url": "https://economictimes.indiatimes.com/industry/banking/finance/banking/indusind-bank-chiefs-to-exit-within-months-after-accounting-lapses-sources-say/articleshow/119304233.cms",
+          "sentiment_label": "negative",
+          "relevance": 0.96,
+          "summary": "The Reserve Bank of India has asked IndusInd Bank CEO Sumant Kathpalia and his deputy to step down after significant accounting errors were found in the derivatives portfolio. The RBI seeks an orderly transition to avoid impacting depositors' confidence. The discrepancy led to Moody's placing the bank's rating on review for a potential downgrade."
+        },
+        {
+          "source": "moneycontrol",
+          "headline": "IndusInd Bank denies report claiming bank\u2019s chiefs to exit within months after accounting lapses",
+          "url": "https://www.moneycontrol.com/news/business/indusind-bank-denies-report-about-bank-s-chiefs-to-exit-within-months-after-accounting-lapses-12972148.html",
+          "sentiment_label": "negative",
+          "relevance": 0.97,
+          "summary": "Earlier today, Reuters citing sources reported that RBI has urged the CEO of IndusInd Bank and his deputy to step down after significant accounting lapses"
+        },
+        {
+          "source": "business_line",
+          "headline": "Yes Bank &amp; IndusInd Bank Share Price Highlights: IndusInd shares end nearly 5% lower, Yes Bank falls over 2%",
+          "url": "https://www.thehindubusinessline.com/markets/stock-markets/indusind-bank-stocks-today-yes-bank-share-price-live-news-updates/article69367409.ece",
+          "sentiment_label": "negative",
+          "relevance": 0.83,
+          "summary": "Yes Bank stocks today, IndusInd Bank share price news &amp; updates: Why are these banking stocks in focus today? Yes Bank shares are in focus as it announced the receipt of \u20b9429 crore from JC Flowers Asset Reconstruction Company for sale of its NPA portfolio in December 2022.\u00a0  IndusInd Bank shares are in focus. Grappling with a major accounting lapse, the bank has appointed Grant Thornton Bharat to conduct a forensic review of discrepancies in its derivatives portfolio, amounting to approximately \u20b91,577 crore over the past six years.\u00a0 On March 24, 2025, The bank informed exchanges that it has been imposed with a penalty of \u20b930.15 crore by Joint Commissioner of CGST &amp; Central Excise, Thane Commissionerate for various GST issues. The Bank will explore filing of appeal against the order.\u00a0  Follow for more."
+        }
+      ],
+      "sources": [
+        "economic_times",
+        "moneycontrol",
+        "financial_express",
+        "business_line",
+        "business_today"
+      ]
+    }
+  ]
+}
