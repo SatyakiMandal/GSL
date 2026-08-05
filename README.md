@@ -16,7 +16,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-366 tests
+378 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -123,7 +123,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
 `pip install`, which is why it's not in `.[all]`).
 
 ```bash
-pytest -q     # 366 tests, no network required
+pytest -q     # 378 tests, no network required
 ```
 
 ### Run the spike
@@ -297,6 +297,30 @@ words to co-occur in the slug (not all of them, real slugs often drop a word),
 which rules out a bare "tata" while staying tolerant of which two words a
 headline kept. Re-run against the same probe: 99 candidates → 3, with zero
 loss against the 7 already-confirmed-relevant articles from a real run.
+
+**A real bug a live run caught: the full legal company name matches almost
+nothing in ordinary press text.** A run for Sonata Software Limited over a
+7-month window came back with **zero** relevant items — `relevant: 0` out of
+10 candidates that even survived the slug pre-filter — despite genuine,
+easy-to-find coverage (Q4 results, a CEO change, a 10% single-day price
+jump) existing in that window. The cause: the only aliases in play were the
+company name exactly as typed, `"Sonata Software Limited"`, and an unrelated
+user-supplied guess, `"SONATASOF"`. Both `relevance.py`'s scoring and the
+slug pre-filter above match on the literal alias text, and Indian financial
+headlines essentially never write out the full legal suffix — they say
+"Sonata Software," not "Sonata Software Limited." Verified directly: scoring
+a paragraph saturated with "Sonata Software" mentions against the alias
+`"Sonata Software Limited"` alone returns `0.0`, "no alias match"; adding
+the suffix-stripped `"Sonata Software"` scores it `0.86`. Every example
+command in this README works around this by hand-supplying a short alias
+(`--alias Adani --alias "Adani Group" --alias AEL`), which is exactly what
+silently failed to happen here. Fixed at the source rather than by
+documentation alone: `RunConfig.all_aliases`
+(`ceia/models.py:_strip_corporate_suffix`) now always tries a version of the
+company name with a trailing corporate suffix removed — Limited, Ltd, Pvt
+Ltd, Private Limited, Inc, Corp, Corporation, Co, Company, LLC, PLC — so a
+run does not depend on the user remembering to add one by hand. A company
+name with no such suffix (`"Adani Enterprises"`, `"Wipro"`) is unaffected.
 
 **Round-robin across sources.** Candidates are interleaved before `--limit`
 applies, so a capped run samples every source instead of spending its whole

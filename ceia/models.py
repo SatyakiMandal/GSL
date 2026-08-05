@@ -14,6 +14,39 @@ IST_OFFSET_HOURS = 5.5
 MARKET_CLOSE_HOUR = 15
 MARKET_CLOSE_MINUTE = 30
 
+# Longest/most specific first, so "XYZ Private Limited" strips to "XYZ"
+# rather than to "XYZ Private" by matching the bare "limited" suffix first.
+_CORPORATE_SUFFIXES = [
+    "private limited", "pvt ltd", "limited", "ltd",
+    "incorporated", "inc", "corporation", "corp", "company", "co", "llc", "plc",
+]
+
+
+def _strip_corporate_suffix(company: str) -> str | None:
+    """The company name with a trailing corporate suffix removed, or
+    ``None`` if it does not end in one of the known suffixes.
+
+    News headlines almost never carry the full legal suffix - the Indian
+    financial press writes "Sonata Software", not "Sonata Software
+    Limited" - so a run whose alias list is built only from the exact
+    company name can silently match nothing. Verified directly on a real
+    case: scoring a body saturated with "Sonata Software" mentions against
+    the alias "Sonata Software Limited" alone returns 0.0, "no alias
+    match"; adding the suffix-stripped "Sonata Software" scores it 0.86.
+    This is why ``RunConfig.all_aliases`` always tries a stripped form
+    rather than depending on the user to supply one by hand.
+    """
+    normalised = company.strip()
+    lowered = normalised.lower()
+    for suffix in _CORPORATE_SUFFIXES:
+        pattern = r"[\s,]+" + r"\.?\s+".join(re.escape(w) for w in suffix.split()) + r"\.?$"
+        match = re.search(pattern, lowered)
+        if match:
+            stripped = normalised[:match.start()].strip().rstrip(",")
+            if stripped:
+                return stripped
+    return None
+
 
 @dataclass
 class NewsItem:
@@ -113,13 +146,19 @@ class RunConfig:
 
     @property
     def all_aliases(self) -> list[str]:
-        """Company name plus user-supplied aliases, longest first.
+        """Company name plus user-supplied aliases, longest first, plus a
+        suffix-stripped short form of the company name (see
+        :func:`_strip_corporate_suffix`) so a run does not silently depend
+        on the user remembering to supply one by hand.
 
         Longest-first matters so "Adani Enterprises" is preferred over "Adani"
         when both match, which keeps the more specific alias in
         ``matched_aliases``.
         """
         names = [self.company, *self.aliases]
+        short_form = _strip_corporate_suffix(self.company)
+        if short_form:
+            names.append(short_form)
         seen, out = set(), []
         for name in sorted(names, key=len, reverse=True):
             key = name.lower().strip()
