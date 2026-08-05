@@ -1,0 +1,440 @@
+From c92316fad9a0d7e8ae4e76502db94e706555b3b0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 5 Aug 2026 14:36:28 +0000
+Subject: [PATCH] Add ticker-search-based alias widening, a generalized fix
+ beyond suffix-stripping
+
+Re-running the fixed Sonata Software case surfaced real coverage where
+there had been none - but the CEO-transition story from the same window
+still didn't come through. Press headlines about leadership changes often
+drop every word but the company's leading one: "Sonata appoints Rajsekhar
+Datta Roy as CEO," not "Sonata Software appoints...". Verified directly:
+that headline scores 0.216 against the current aliases, still below the
+0.35 threshold.
+
+Adding the leading word unconditionally would reopen the conglomerate-
+sibling bug this project already found and fixed once (a bare "Tata" alias
+matching Tata Motors/Steel/Power articles meant for a different Tata Group
+company). A per-company alias list isn't a real fix either - it just moves
+the same silent gap to the next company nobody thought to check.
+
+ceia/ingest.py:widen_aliases() asks the question a human fact-checker
+would instead: search for the bare leading word via the same ticker-search
+endpoint --ticker auto-detection already uses, and only trust it if this
+company is the top result. "Sonata" resolves to Sonata Software and gets
+added; "Tata" resolves to whichever Tata Group company Yahoo ranks
+highest, essentially never the specific sibling a given run is actually
+about, so it's correctly left out - with no hardcoded list of "risky"
+conglomerate names to write or maintain.
+
+Wired into ingest.run() (used for both the slug pre-filter and relevance
+scoring), reported via a new IngestResult.aliases_used field so the run's
+own JSON always states what was actually searched for, and gated by a new
+--skip-alias-widening flag on both ingest.py and analyze.py's CLIs.
+Best-effort like ticker auto-detection: any lookup failure degrades to
+skipping the extra alias rather than failing the run.
+
+Adds tests/test_ingest.py::TestWidenAliases (7 tests, driven through a
+fake session the same way test_ticker_lookup.py already does) covering the
+safe case, the conglomerate-sibling refusal, lookup-failure degradation,
+no-equity-results degradation, no-duplicate-alias, cross-exchange-listing
+matching, and a company name with no usable leading word. 385 tests
+passing, up from 378.
+---
+ README.md            |  33 +++++++++++-
+ ceia/analyze.py      |  10 +++-
+ ceia/ingest.py       |  74 +++++++++++++++++++++++++--
+ tests/test_ingest.py | 116 ++++++++++++++++++++++++++++++++++++++++++-
+ 4 files changed, 223 insertions(+), 10 deletions(-)
+
+diff --git a/README.md b/README.md
+index ea0db7e..95acb0e 100644
+--- a/README.md
++++ b/README.md
+@@ -16,7 +16,7 @@ It is a structured case study generator, not a trading signal and not proof of
+ causation. See [Limitations](#limitations).
+ 
+ **Status: complete and verified on real data.** All four phases, a GUI on top,
+-378 tests
++385 tests
+ passing, and PRD Success Metric #2 — a known incident correctly flagged with
+ the abnormal-return direction matching sentiment — is met. `yfinance` could
+ not be reached from the build sandbox (a TLS-terminating proxy broke it), so
+@@ -123,7 +123,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
+ `pip install`, which is why it's not in `.[all]`).
+ 
+ ```bash
+-pytest -q     # 378 tests, no network required
++pytest -q     # 385 tests, no network required
+ ```
+ 
+ ### Run the spike
+@@ -322,6 +322,35 @@ Ltd, Private Limited, Inc, Corp, Corporation, Co, Company, LLC, PLC — so a
+ run does not depend on the user remembering to add one by hand. A company
+ name with no such suffix (`"Adani Enterprises"`, `"Wipro"`) is unaffected.
+ 
++**A generalized follow-up: even the suffix-stripped short form isn't always
++enough.** Re-running the fixed Sonata Software case surfaced 8 news items and
++4 candidate days where there had been none — but the CEO-transition story
++from the same window still didn't come through, because press headlines
++about appointments and departures often drop *every* word but the company's
++leading one: "Sonata appoints Rajsekhar Datta Roy as CEO," not "Sonata
++Software appoints..." Verified directly: that exact headline scores `0.216`
++against the aliases `["Sonata Software Limited", "Sonata Software"]` — still
++below the `0.35` threshold. The fix can't be "also add the company's short
++name" per company, one at a time, forever — that is exactly the case-by-case
++approach that produces silent gaps for the next company nobody thought to
++check. `ceia/ingest.py:widen_aliases()` instead asks the same question a
++human fact-checker would before trusting a bare first name: **is this
++company the top result when you search for that word alone?** It reuses the
++same Yahoo ticker-search endpoint `--ticker` auto-detection already calls
++(`ceia/ticker_lookup.py:resolve_ticker`) — searching for `"Sonata"` returns
++Sonata Software Limited as the top (only) match, so `"Sonata"` is added.
++Searching for `"Tata"` returns whichever Tata Group company Yahoo ranks
++highest — almost certainly *not* whichever specific Tata sibling a given run
++is actually about — so `"Tata"` is correctly left out, with **no hardcoded
++list of "risky" conglomerate names to write or maintain**, which would
++always be one new group away from wrong. This is the same precision/recall
++split the prefilter's 2-of-N word rule already draws, just answered with a
++real external signal instead of a fixed threshold. Best-effort like ticker
++auto-detection: a lookup failure (offline, rate-limited) just skips the
++extra alias rather than failing the run. On by default for live scraping;
++`--skip-alias-widening` opts out if the extra network round-trip per run
++isn't wanted.
++
+ **Round-robin across sources.** Candidates are interleaved before `--limit`
+ applies, so a capped run samples every source instead of spending its whole
+ budget on whichever ran first.
+diff --git a/ceia/analyze.py b/ceia/analyze.py
+index e3bb3e8..6b4c8c5 100644
+--- a/ceia/analyze.py
++++ b/ceia/analyze.py
+@@ -29,6 +29,7 @@ from .fetcher import DEFAULT_USER_AGENT, Fetcher
+ from .ingest import IngestResult, run as run_ingest
+ from .models import NewsItem, RunConfig
+ from .prices import PriceError
++from .ticker_lookup import TickerLookupError, resolve_ticker
+ 
+ log = logging.getLogger(__name__)
+ 
+@@ -370,6 +371,11 @@ def main() -> None:
+                              "(default 8). Requests to any single origin are "
+                              "still serialised at the configured interval "
+                              "regardless of --workers.")
++    parser.add_argument("--skip-alias-widening", action="store_true",
++                        help="Live scraping only. Don't try the company's "
++                             "leading word as an extra alias (see "
++                             "ceia.ingest.widen_aliases()). On by default; "
++                             "costs one extra ticker-search request per run.")
+     parser.add_argument("--price-csv", default=None,
+                         help="Directory of <SYMBOL>.csv files; forces the CSV provider.")
+     parser.add_argument("--api-key", default=None,
+@@ -392,7 +398,6 @@ def main() -> None:
+ 
+     ticker = args.ticker
+     if not ticker:
+-        from .ticker_lookup import TickerLookupError, resolve_ticker
+         try:
+             match = resolve_ticker(args.company, exchange=args.exchange)
+         except TickerLookupError as exc:
+@@ -421,7 +426,8 @@ def main() -> None:
+     else:
+         fetcher = Fetcher(cache_dir=args.cache_dir, user_agent=args.user_agent)
+         ingested: IngestResult = run_ingest(config, fetcher=fetcher, limit=args.limit,
+-                                            max_workers=args.workers)
++                                            max_workers=args.workers,
++                                            skip_alias_widening=args.skip_alias_widening)
+         items, news_meta = ingested.items, ingested.to_dict()
+         news_meta.pop("items", None)
+ 
+diff --git a/ceia/ingest.py b/ceia/ingest.py
+index 6d304d7..e12afe6 100644
+--- a/ceia/ingest.py
++++ b/ceia/ingest.py
+@@ -34,6 +34,7 @@ from .fetcher import DEFAULT_USER_AGENT, Fetcher, RobotsDisallowed
+ from .emotion import GoEmotionScorer
+ from .models import NewsItem, RunConfig
+ from .sentiment import FinBertScorer
++from .ticker_lookup import TickerLookupError, resolve_ticker
+ 
+ log = logging.getLogger(__name__)
+ 
+@@ -57,6 +58,11 @@ class IngestResult:
+     disabled_sources: dict[str, str] = field(default_factory=dict)
+     stats: dict[str, int] = field(default_factory=dict)
+     per_source: dict[str, int] = field(default_factory=dict)
++    # The aliases actually used for prefiltering/relevance this run - may
++    # include one extra widened alias beyond config.all_aliases (see
++    # widen_aliases()). Reported separately so a report can always say
++    # exactly what was searched for, not just what was configured.
++    aliases_used: list[str] = field(default_factory=list)
+ 
+     def to_dict(self) -> dict:
+         return {
+@@ -65,7 +71,7 @@ class IngestResult:
+             "benchmark": self.config.benchmark,
+             "start": self.config.start.isoformat(),
+             "end": self.config.end.isoformat(),
+-            "aliases": self.config.all_aliases,
++            "aliases": self.aliases_used or self.config.all_aliases,
+             "source_status": self.source_status,
+             "disabled_sources": self.disabled_sources,
+             "stats": self.stats,
+@@ -151,6 +157,57 @@ def interleave(candidates: list[Candidate]) -> list[Candidate]:
+     return ordered
+ 
+ 
++def widen_aliases(config: RunConfig, session=None) -> list[str]:
++    """``RunConfig.all_aliases`` plus the company's single leading word -
++    "Sonata" from "Sonata Software" - when an independent ticker-search
++    check confirms it is safe to trust.
++
++    Short press headlines, appointment/leadership stories especially, often
++    drop every word but the first: "Sonata appoints new CEO", not "Sonata
++    Software appoints new CEO". Neither the full company name nor its
++    suffix-stripped short form (see ``RunConfig.all_aliases`` /
++    ``_strip_corporate_suffix``) matches that, so real coverage is missed
++    unless the leading word itself is trusted as an alias - but doing that
++    unconditionally for every company would reopen the conglomerate-sibling
++    bug this project already found and fixed once at the slug-prefilter
++    level (Tata Motors/Steel/Power articles all matching a bare "Tata"
++    alias meant for Tata Consumer Products; see the README).
++
++    There is no way to tell "Sonata" and "Tata" apart from the string
++    alone, so this asks the same question a human fact-checker would: search
++    for the bare word via the same ticker-lookup endpoint ``--ticker``
++    auto-detection already uses, and only trust it if *this* company is the
++    top result. A company that shares its leading word with a well-known
++    sibling (Tata, Adani, Bajaj, Reliance, Birla, ...) will not be the top
++    result for its own group name, so the leading word is correctly left
++    out for it - with no hardcoded list of "risky" names to write or
++    maintain, which would always be one new conglomerate behind.
++
++    Best-effort: any lookup failure (offline, rate-limited, endpoint down)
++    just skips the extra alias rather than failing the run, the same
++    degrade-not-fail rule ticker auto-detection already follows.
++    """
++    aliases = config.all_aliases
++    words = [w for w in re.findall(r"[A-Za-z][A-Za-z&]*", config.company)
++             if len(w) > 2 and w.lower() != "the"]
++    if not words:
++        return aliases
++    leading = words[0]
++    if leading.lower() in {a.lower() for a in aliases}:
++        return aliases
++    try:
++        match = resolve_ticker(leading, exchange=config.exchange, session=session)
++    except TickerLookupError as exc:
++        log.info("alias widening: skipped %r (%s)", leading, exc)
++        return aliases
++    if match.symbol.split(".")[0].upper() != config.ticker.split(".")[0].upper():
++        log.info("alias widening: skipped %r (top ticker-search result was %s, "
++                 "not this company)", leading, match.symbol)
++        return aliases
++    log.info("alias widening: added %r (confirmed top ticker-search result)", leading)
++    return [*aliases, leading]
++
++
+ def cap_across_range(candidates: list[Candidate], limit: int) -> list[Candidate]:
+     """Cap the candidate list to ``limit`` while keeping the whole date range
+     represented, rather than exhausting the cap on whichever end comes first.
+@@ -277,16 +334,20 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
+         limit: int | None = None,
+         skip_sentiment: bool = False,
+         skip_emotion: bool = False,
++        skip_alias_widening: bool = False,
+         max_workers: int = 8) -> IngestResult:
+     fetcher = fetcher or Fetcher()
+     sources = [s for s in (config.sources or DEFAULT_SOURCES) if s not in DISABLED_SOURCES]
+     result = IngestResult(config=config, disabled_sources=dict(DISABLED_SOURCES))
+ 
++    aliases = config.all_aliases if skip_alias_widening else widen_aliases(config)
++    result.aliases_used = aliases
++
+     candidates, status = discover(fetcher, sources, config.start, config.end)
+     result.source_status = status
+     log.info("discovered %d candidate URLs", len(candidates))
+ 
+-    token_groups = _slug_token_groups(config.all_aliases, config.ticker)
++    token_groups = _slug_token_groups(aliases, config.ticker)
+     narrowed = interleave(prefilter(candidates, token_groups))
+     log.info("pre-filtered to %d URLs on slug groups %s", len(narrowed),
+              [sorted(g) for g in token_groups])
+@@ -302,7 +363,7 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
+     log.info("parsed %d articles, %d inside the requested window",
+              len(parsed_items), len(items))
+ 
+-    kept, dropped = relevance.apply(items, config.all_aliases, config.ticker,
++    kept, dropped = relevance.apply(items, aliases, config.ticker,
+                                     config.min_relevance)
+     log.info("relevance kept %d, dropped %d", len(kept), len(dropped))
+ 
+@@ -377,6 +438,11 @@ def main() -> None:
+                         help="Skip GoEmotions (no model download). FinBERT "
+                              "sentiment, which drives incident ranking, is "
+                              "unaffected either way.")
++    parser.add_argument("--skip-alias-widening", action="store_true",
++                        help="Don't try the company's leading word as an "
++                             "extra alias (see widen_aliases()). On by "
++                             "default; costs one extra ticker-search "
++                             "request per run.")
+     parser.add_argument("--cache-dir", default="cache")
+     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
+     parser.add_argument("--min-interval", type=float, default=2.0)
+@@ -387,7 +453,6 @@ def main() -> None:
+ 
+     ticker = args.ticker
+     if not ticker:
+-        from .ticker_lookup import TickerLookupError, resolve_ticker
+         try:
+             match = resolve_ticker(args.company, exchange=args.exchange)
+         except TickerLookupError as exc:
+@@ -417,6 +482,7 @@ def main() -> None:
+     result = run(config, fetcher=fetcher, limit=args.limit,
+                  skip_sentiment=args.skip_sentiment,
+                  skip_emotion=args.skip_emotion,
++                 skip_alias_widening=args.skip_alias_widening,
+                  max_workers=args.workers)
+ 
+     out_path = Path(args.out)
+diff --git a/tests/test_ingest.py b/tests/test_ingest.py
+index f06d4de..462e208 100644
+--- a/tests/test_ingest.py
++++ b/tests/test_ingest.py
+@@ -11,12 +11,21 @@ import sys
+ from datetime import date, datetime
+ from pathlib import Path
+ 
++import pytest
++
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ 
+ from ceia.discovery import Candidate  # noqa: E402
+ from ceia.extract import IST, clean_headline, json_ld_articles, parse_article  # noqa: E402
+-from ceia.ingest import _slug_token_groups, cap_across_range, in_range, interleave, prefilter  # noqa: E402
+-from ceia.models import NewsItem  # noqa: E402
++from ceia.ingest import (  # noqa: E402
++    _slug_token_groups,
++    cap_across_range,
++    in_range,
++    interleave,
++    prefilter,
++    widen_aliases,
++)
++from ceia.models import NewsItem, RunConfig  # noqa: E402
+ 
+ 
+ class TestSlugTokenGroups:
+@@ -84,6 +93,109 @@ class TestSlugPrefilter:
+         assert prefilter(candidates, groups) == candidates
+ 
+ 
++class _FakeResponse:
++    def __init__(self, status_code: int, payload: dict | None = None) -> None:
++        self.status_code = status_code
++        self._payload = payload or {}
++
++    def json(self) -> dict:
++        return self._payload
++
++
++class _FakeSession:
++    """Same shape test_ticker_lookup.py drives resolve_ticker through -
++    widen_aliases() calls that function directly, so it takes the same fake."""
++
++    def __init__(self, responses: list[_FakeResponse] | None = None,
++                should_not_be_called: bool = False) -> None:
++        self._responses = list(responses or [])
++        self._should_not_be_called = should_not_be_called
++        self.calls = 0
++
++    def get(self, *args, **kwargs):
++        self.calls += 1
++        if self._should_not_be_called:
++            raise AssertionError("resolve_ticker should not have been called")
++        return self._responses.pop(0)
++
++
++def _quotes(*symbols_and_names: tuple[str, str]) -> _FakeResponse:
++    return _FakeResponse(200, {"quotes": [
++        {"symbol": symbol, "quoteType": "EQUITY", "longname": name}
++        for symbol, name in symbols_and_names
++    ]})
++
++
++class TestWidenAliases:
++    """The generalized fix for the Sonata Software gap: a short press
++    headline that drops every word but the company's leading one ("Sonata
++    appoints new CEO") matches neither the full legal name nor its
++    suffix-stripped short form. Adding the leading word as an alias closes
++    that, but only when an independent ticker-search confirms it is not
++    also a well-known sibling's leading word (the Tata/Adani/Bajaj problem
++    this project already hit once - see README)."""
++
++    @pytest.fixture(autouse=True)
++    def _no_real_sleeps(self, monkeypatch):
++        """Retries back off with time.sleep(); tests shouldn't pay for that."""
++        monkeypatch.setattr("ceia.ticker_lookup.time.sleep", lambda _seconds: None)
++
++    def test_adds_leading_word_when_it_is_the_top_search_result(self):
++        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS")
++        session = _FakeSession([_quotes(("SONATSOFTW.NS", "Sonata Software Ltd"))])
++        aliases = widen_aliases(config, session=session)
++        assert "Sonata" in aliases
++        assert session.calls == 1
++
++    def test_skips_leading_word_when_a_different_company_is_the_top_result(self):
++        """The exact conglomerate-sibling case: a run for Tata Consumer
++        Products must not pick up "Tata" as an alias when Tata's own
++        ticker-search top result is a different Tata Group company."""
++        config = RunConfig(company="Tata Consumer Products Limited",
++                           ticker="TATACONSUM.NS")
++        session = _FakeSession([_quotes(("TATAMOTORS.NS", "Tata Motors Ltd"))])
++        aliases = widen_aliases(config, session=session)
++        assert "Tata" not in aliases
++        assert aliases == config.all_aliases
++
++    def test_lookup_failure_degrades_silently(self):
++        """Offline, rate-limited, or a dead endpoint must not fail the run -
++        same rule --ticker auto-detection already follows."""
++        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS")
++        session = _FakeSession([_FakeResponse(500)] * 5)  # exhausts all retries
++        aliases = widen_aliases(config, session=session)
++        assert aliases == config.all_aliases
++
++    def test_no_equity_results_degrades_silently(self):
++        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS")
++        session = _FakeSession([_FakeResponse(200, {"quotes": []})])
++        aliases = widen_aliases(config, session=session)
++        assert aliases == config.all_aliases
++
++    def test_does_not_duplicate_an_alias_already_present(self):
++        """If the user (or RunConfig.all_aliases' own suffix-stripping)
++        already supplied the leading word, no lookup is needed at all."""
++        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS",
++                           aliases=["Sonata"])
++        session = _FakeSession(should_not_be_called=True)
++        aliases = widen_aliases(config, session=session)
++        assert aliases.count("Sonata") == 1
++        assert session.calls == 0
++
++    def test_cross_exchange_listing_still_counts_as_a_match(self):
++        """Same company, different exchange suffix (.BO vs .NS) - the root
++        symbol is what identifies the company, not the exchange."""
++        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS")
++        session = _FakeSession([_quotes(("SONATSOFTW.BO", "Sonata Software Ltd"))])
++        aliases = widen_aliases(config, session=session)
++        assert "Sonata" in aliases
++
++    def test_company_name_with_no_usable_leading_word_is_left_alone(self):
++        config = RunConfig(company="Ltd", ticker="TEST.NS")
++        session = _FakeSession(should_not_be_called=True)
++        assert widen_aliases(config, session=session) == config.all_aliases
++
++
+ class TestInterleave:
+     def test_round_robins_across_sources(self):
+         candidates = (
+-- 
+2.43.0
+
