@@ -11,12 +11,21 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ceia.discovery import Candidate  # noqa: E402
 from ceia.extract import IST, clean_headline, json_ld_articles, parse_article  # noqa: E402
-from ceia.ingest import _slug_token_groups, cap_across_range, in_range, interleave, prefilter  # noqa: E402
-from ceia.models import NewsItem  # noqa: E402
+from ceia.ingest import (  # noqa: E402
+    _slug_token_groups,
+    cap_across_range,
+    in_range,
+    interleave,
+    prefilter,
+    widen_aliases,
+)
+from ceia.models import NewsItem, RunConfig  # noqa: E402
 
 
 class TestSlugTokenGroups:
@@ -82,6 +91,109 @@ class TestSlugPrefilter:
         candidates = [Candidate("https://x.com/tcpl-quarterly-earnings.html", "mc")]
         groups = [frozenset({"tata", "consumer", "products"}), frozenset({"tcpl"})]
         assert prefilter(candidates, groups) == candidates
+
+
+class _FakeResponse:
+    def __init__(self, status_code: int, payload: dict | None = None) -> None:
+        self.status_code = status_code
+        self._payload = payload or {}
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FakeSession:
+    """Same shape test_ticker_lookup.py drives resolve_ticker through -
+    widen_aliases() calls that function directly, so it takes the same fake."""
+
+    def __init__(self, responses: list[_FakeResponse] | None = None,
+                should_not_be_called: bool = False) -> None:
+        self._responses = list(responses or [])
+        self._should_not_be_called = should_not_be_called
+        self.calls = 0
+
+    def get(self, *args, **kwargs):
+        self.calls += 1
+        if self._should_not_be_called:
+            raise AssertionError("resolve_ticker should not have been called")
+        return self._responses.pop(0)
+
+
+def _quotes(*symbols_and_names: tuple[str, str]) -> _FakeResponse:
+    return _FakeResponse(200, {"quotes": [
+        {"symbol": symbol, "quoteType": "EQUITY", "longname": name}
+        for symbol, name in symbols_and_names
+    ]})
+
+
+class TestWidenAliases:
+    """The generalized fix for the Sonata Software gap: a short press
+    headline that drops every word but the company's leading one ("Sonata
+    appoints new CEO") matches neither the full legal name nor its
+    suffix-stripped short form. Adding the leading word as an alias closes
+    that, but only when an independent ticker-search confirms it is not
+    also a well-known sibling's leading word (the Tata/Adani/Bajaj problem
+    this project already hit once - see README)."""
+
+    @pytest.fixture(autouse=True)
+    def _no_real_sleeps(self, monkeypatch):
+        """Retries back off with time.sleep(); tests shouldn't pay for that."""
+        monkeypatch.setattr("ceia.ticker_lookup.time.sleep", lambda _seconds: None)
+
+    def test_adds_leading_word_when_it_is_the_top_search_result(self):
+        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS")
+        session = _FakeSession([_quotes(("SONATSOFTW.NS", "Sonata Software Ltd"))])
+        aliases = widen_aliases(config, session=session)
+        assert "Sonata" in aliases
+        assert session.calls == 1
+
+    def test_skips_leading_word_when_a_different_company_is_the_top_result(self):
+        """The exact conglomerate-sibling case: a run for Tata Consumer
+        Products must not pick up "Tata" as an alias when Tata's own
+        ticker-search top result is a different Tata Group company."""
+        config = RunConfig(company="Tata Consumer Products Limited",
+                           ticker="TATACONSUM.NS")
+        session = _FakeSession([_quotes(("TATAMOTORS.NS", "Tata Motors Ltd"))])
+        aliases = widen_aliases(config, session=session)
+        assert "Tata" not in aliases
+        assert aliases == config.all_aliases
+
+    def test_lookup_failure_degrades_silently(self):
+        """Offline, rate-limited, or a dead endpoint must not fail the run -
+        same rule --ticker auto-detection already follows."""
+        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS")
+        session = _FakeSession([_FakeResponse(500)] * 5)  # exhausts all retries
+        aliases = widen_aliases(config, session=session)
+        assert aliases == config.all_aliases
+
+    def test_no_equity_results_degrades_silently(self):
+        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS")
+        session = _FakeSession([_FakeResponse(200, {"quotes": []})])
+        aliases = widen_aliases(config, session=session)
+        assert aliases == config.all_aliases
+
+    def test_does_not_duplicate_an_alias_already_present(self):
+        """If the user (or RunConfig.all_aliases' own suffix-stripping)
+        already supplied the leading word, no lookup is needed at all."""
+        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS",
+                           aliases=["Sonata"])
+        session = _FakeSession(should_not_be_called=True)
+        aliases = widen_aliases(config, session=session)
+        assert aliases.count("Sonata") == 1
+        assert session.calls == 0
+
+    def test_cross_exchange_listing_still_counts_as_a_match(self):
+        """Same company, different exchange suffix (.BO vs .NS) - the root
+        symbol is what identifies the company, not the exchange."""
+        config = RunConfig(company="Sonata Software Limited", ticker="SONATSOFTW.NS")
+        session = _FakeSession([_quotes(("SONATSOFTW.BO", "Sonata Software Ltd"))])
+        aliases = widen_aliases(config, session=session)
+        assert "Sonata" in aliases
+
+    def test_company_name_with_no_usable_leading_word_is_left_alone(self):
+        config = RunConfig(company="Ltd", ticker="TEST.NS")
+        session = _FakeSession(should_not_be_called=True)
+        assert widen_aliases(config, session=session) == config.all_aliases
 
 
 class TestInterleave:

@@ -34,6 +34,7 @@ from .fetcher import DEFAULT_USER_AGENT, Fetcher, RobotsDisallowed
 from .emotion import GoEmotionScorer
 from .models import NewsItem, RunConfig
 from .sentiment import FinBertScorer
+from .ticker_lookup import TickerLookupError, resolve_ticker
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +58,11 @@ class IngestResult:
     disabled_sources: dict[str, str] = field(default_factory=dict)
     stats: dict[str, int] = field(default_factory=dict)
     per_source: dict[str, int] = field(default_factory=dict)
+    # The aliases actually used for prefiltering/relevance this run - may
+    # include one extra widened alias beyond config.all_aliases (see
+    # widen_aliases()). Reported separately so a report can always say
+    # exactly what was searched for, not just what was configured.
+    aliases_used: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -65,7 +71,7 @@ class IngestResult:
             "benchmark": self.config.benchmark,
             "start": self.config.start.isoformat(),
             "end": self.config.end.isoformat(),
-            "aliases": self.config.all_aliases,
+            "aliases": self.aliases_used or self.config.all_aliases,
             "source_status": self.source_status,
             "disabled_sources": self.disabled_sources,
             "stats": self.stats,
@@ -149,6 +155,57 @@ def interleave(candidates: list[Candidate]) -> list[Candidate]:
             if index < len(queue):
                 ordered.append(queue[index])
     return ordered
+
+
+def widen_aliases(config: RunConfig, session=None) -> list[str]:
+    """``RunConfig.all_aliases`` plus the company's single leading word -
+    "Sonata" from "Sonata Software" - when an independent ticker-search
+    check confirms it is safe to trust.
+
+    Short press headlines, appointment/leadership stories especially, often
+    drop every word but the first: "Sonata appoints new CEO", not "Sonata
+    Software appoints new CEO". Neither the full company name nor its
+    suffix-stripped short form (see ``RunConfig.all_aliases`` /
+    ``_strip_corporate_suffix``) matches that, so real coverage is missed
+    unless the leading word itself is trusted as an alias - but doing that
+    unconditionally for every company would reopen the conglomerate-sibling
+    bug this project already found and fixed once at the slug-prefilter
+    level (Tata Motors/Steel/Power articles all matching a bare "Tata"
+    alias meant for Tata Consumer Products; see the README).
+
+    There is no way to tell "Sonata" and "Tata" apart from the string
+    alone, so this asks the same question a human fact-checker would: search
+    for the bare word via the same ticker-lookup endpoint ``--ticker``
+    auto-detection already uses, and only trust it if *this* company is the
+    top result. A company that shares its leading word with a well-known
+    sibling (Tata, Adani, Bajaj, Reliance, Birla, ...) will not be the top
+    result for its own group name, so the leading word is correctly left
+    out for it - with no hardcoded list of "risky" names to write or
+    maintain, which would always be one new conglomerate behind.
+
+    Best-effort: any lookup failure (offline, rate-limited, endpoint down)
+    just skips the extra alias rather than failing the run, the same
+    degrade-not-fail rule ticker auto-detection already follows.
+    """
+    aliases = config.all_aliases
+    words = [w for w in re.findall(r"[A-Za-z][A-Za-z&]*", config.company)
+             if len(w) > 2 and w.lower() != "the"]
+    if not words:
+        return aliases
+    leading = words[0]
+    if leading.lower() in {a.lower() for a in aliases}:
+        return aliases
+    try:
+        match = resolve_ticker(leading, exchange=config.exchange, session=session)
+    except TickerLookupError as exc:
+        log.info("alias widening: skipped %r (%s)", leading, exc)
+        return aliases
+    if match.symbol.split(".")[0].upper() != config.ticker.split(".")[0].upper():
+        log.info("alias widening: skipped %r (top ticker-search result was %s, "
+                 "not this company)", leading, match.symbol)
+        return aliases
+    log.info("alias widening: added %r (confirmed top ticker-search result)", leading)
+    return [*aliases, leading]
 
 
 def cap_across_range(candidates: list[Candidate], limit: int) -> list[Candidate]:
@@ -277,16 +334,20 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
         limit: int | None = None,
         skip_sentiment: bool = False,
         skip_emotion: bool = False,
+        skip_alias_widening: bool = False,
         max_workers: int = 8) -> IngestResult:
     fetcher = fetcher or Fetcher()
     sources = [s for s in (config.sources or DEFAULT_SOURCES) if s not in DISABLED_SOURCES]
     result = IngestResult(config=config, disabled_sources=dict(DISABLED_SOURCES))
 
+    aliases = config.all_aliases if skip_alias_widening else widen_aliases(config)
+    result.aliases_used = aliases
+
     candidates, status = discover(fetcher, sources, config.start, config.end)
     result.source_status = status
     log.info("discovered %d candidate URLs", len(candidates))
 
-    token_groups = _slug_token_groups(config.all_aliases, config.ticker)
+    token_groups = _slug_token_groups(aliases, config.ticker)
     narrowed = interleave(prefilter(candidates, token_groups))
     log.info("pre-filtered to %d URLs on slug groups %s", len(narrowed),
              [sorted(g) for g in token_groups])
@@ -302,7 +363,7 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
     log.info("parsed %d articles, %d inside the requested window",
              len(parsed_items), len(items))
 
-    kept, dropped = relevance.apply(items, config.all_aliases, config.ticker,
+    kept, dropped = relevance.apply(items, aliases, config.ticker,
                                     config.min_relevance)
     log.info("relevance kept %d, dropped %d", len(kept), len(dropped))
 
@@ -377,6 +438,11 @@ def main() -> None:
                         help="Skip GoEmotions (no model download). FinBERT "
                              "sentiment, which drives incident ranking, is "
                              "unaffected either way.")
+    parser.add_argument("--skip-alias-widening", action="store_true",
+                        help="Don't try the company's leading word as an "
+                             "extra alias (see widen_aliases()). On by "
+                             "default; costs one extra ticker-search "
+                             "request per run.")
     parser.add_argument("--cache-dir", default="cache")
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     parser.add_argument("--min-interval", type=float, default=2.0)
@@ -387,7 +453,6 @@ def main() -> None:
 
     ticker = args.ticker
     if not ticker:
-        from .ticker_lookup import TickerLookupError, resolve_ticker
         try:
             match = resolve_ticker(args.company, exchange=args.exchange)
         except TickerLookupError as exc:
@@ -417,6 +482,7 @@ def main() -> None:
     result = run(config, fetcher=fetcher, limit=args.limit,
                  skip_sentiment=args.skip_sentiment,
                  skip_emotion=args.skip_emotion,
+                 skip_alias_widening=args.skip_alias_widening,
                  max_workers=args.workers)
 
     out_path = Path(args.out)

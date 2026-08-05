@@ -29,6 +29,7 @@ from .fetcher import DEFAULT_USER_AGENT, Fetcher
 from .ingest import IngestResult, run as run_ingest
 from .models import NewsItem, RunConfig
 from .prices import PriceError
+from .ticker_lookup import TickerLookupError, resolve_ticker
 
 log = logging.getLogger(__name__)
 
@@ -370,6 +371,11 @@ def main() -> None:
                              "(default 8). Requests to any single origin are "
                              "still serialised at the configured interval "
                              "regardless of --workers.")
+    parser.add_argument("--skip-alias-widening", action="store_true",
+                        help="Live scraping only. Don't try the company's "
+                             "leading word as an extra alias (see "
+                             "ceia.ingest.widen_aliases()). On by default; "
+                             "costs one extra ticker-search request per run.")
     parser.add_argument("--price-csv", default=None,
                         help="Directory of <SYMBOL>.csv files; forces the CSV provider.")
     parser.add_argument("--api-key", default=None,
@@ -392,7 +398,6 @@ def main() -> None:
 
     ticker = args.ticker
     if not ticker:
-        from .ticker_lookup import TickerLookupError, resolve_ticker
         try:
             match = resolve_ticker(args.company, exchange=args.exchange)
         except TickerLookupError as exc:
@@ -421,7 +426,8 @@ def main() -> None:
     else:
         fetcher = Fetcher(cache_dir=args.cache_dir, user_agent=args.user_agent)
         ingested: IngestResult = run_ingest(config, fetcher=fetcher, limit=args.limit,
-                                            max_workers=args.workers)
+                                            max_workers=args.workers,
+                                            skip_alias_widening=args.skip_alias_widening)
         items, news_meta = ingested.items, ingested.to_dict()
         news_meta.pop("items", None)
 

@@ -16,7 +16,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-378 tests
+385 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -123,7 +123,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
 `pip install`, which is why it's not in `.[all]`).
 
 ```bash
-pytest -q     # 378 tests, no network required
+pytest -q     # 385 tests, no network required
 ```
 
 ### Run the spike
@@ -321,6 +321,35 @@ company name with a trailing corporate suffix removed — Limited, Ltd, Pvt
 Ltd, Private Limited, Inc, Corp, Corporation, Co, Company, LLC, PLC — so a
 run does not depend on the user remembering to add one by hand. A company
 name with no such suffix (`"Adani Enterprises"`, `"Wipro"`) is unaffected.
+
+**A generalized follow-up: even the suffix-stripped short form isn't always
+enough.** Re-running the fixed Sonata Software case surfaced 8 news items and
+4 candidate days where there had been none — but the CEO-transition story
+from the same window still didn't come through, because press headlines
+about appointments and departures often drop *every* word but the company's
+leading one: "Sonata appoints Rajsekhar Datta Roy as CEO," not "Sonata
+Software appoints..." Verified directly: that exact headline scores `0.216`
+against the aliases `["Sonata Software Limited", "Sonata Software"]` — still
+below the `0.35` threshold. The fix can't be "also add the company's short
+name" per company, one at a time, forever — that is exactly the case-by-case
+approach that produces silent gaps for the next company nobody thought to
+check. `ceia/ingest.py:widen_aliases()` instead asks the same question a
+human fact-checker would before trusting a bare first name: **is this
+company the top result when you search for that word alone?** It reuses the
+same Yahoo ticker-search endpoint `--ticker` auto-detection already calls
+(`ceia/ticker_lookup.py:resolve_ticker`) — searching for `"Sonata"` returns
+Sonata Software Limited as the top (only) match, so `"Sonata"` is added.
+Searching for `"Tata"` returns whichever Tata Group company Yahoo ranks
+highest — almost certainly *not* whichever specific Tata sibling a given run
+is actually about — so `"Tata"` is correctly left out, with **no hardcoded
+list of "risky" conglomerate names to write or maintain**, which would
+always be one new group away from wrong. This is the same precision/recall
+split the prefilter's 2-of-N word rule already draws, just answered with a
+real external signal instead of a fixed threshold. Best-effort like ticker
+auto-detection: a lookup failure (offline, rate-limited) just skips the
+extra alias rather than failing the run. On by default for live scraping;
+`--skip-alias-widening` opts out if the extra network round-trip per run
+isn't wanted.
 
 **Round-robin across sources.** Candidates are interleaved before `--limit`
 applies, so a capped run samples every source instead of spending its whole
