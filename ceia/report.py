@@ -73,6 +73,9 @@ stroke-linejoin:round;stroke-linecap:round}
 .baseline{stroke:var(--muted);stroke-width:1;stroke-dasharray:2 3;opacity:.55}
 .incident-badge circle{fill:var(--warn-br);stroke:var(--card);stroke-width:1.5}
 .incident-badge text{fill:#fff;font-size:10px;font-weight:700;font-family:inherit}
+.badge-date-bg{fill:var(--plot);opacity:.88}
+.badge-date{fill:var(--warn-br);font-size:9px;font-weight:700;font-family:inherit}
+.chart-caption{fill:var(--muted);font-size:10.5px;font-style:italic}
 .bar-pos{fill:var(--pos)}.bar-neg{fill:var(--neg)}
 .bar-incident{stroke:var(--warn-br);stroke-width:1.4}
 .tone-neg{fill:var(--neg);opacity:.82}.tone-pos{fill:var(--pos);opacity:.82}
@@ -87,6 +90,10 @@ border-radius:0 9px 9px 0;padding:18px 22px;margin:20px 0;background:var(--card)
 padding:1px 9px;font-size:.82rem;font-weight:700;margin-right:9px}
 .src{list-style:none;padding:0;margin:12px 0 0}
 .src li{padding:7px 0;border-top:1px solid var(--line);font-size:.9rem}
+.src a{color:var(--accent);text-decoration:none}
+.src a:hover{text-decoration:underline}
+.src-meta{color:var(--muted);font-size:.8rem}
+.src-summary{color:var(--muted);font-size:.85rem;font-style:italic;margin-top:3px;line-height:1.5}
 .tag{display:inline-block;font-size:.72rem;padding:1px 7px;border-radius:4px;
 background:var(--plot);color:var(--muted);margin-right:7px;border:1px solid var(--line)}
 .foot{color:var(--muted);font-size:.85rem;margin-top:52px;padding-top:16px;
@@ -96,19 +103,31 @@ code{background:var(--plot);padding:1px 5px;border-radius:4px;font-size:.87em}
 """
 
 
-def _sentence(text: str) -> str:
-    """Ensure a fragment ends with terminal punctuation before it is followed
-    by more prose. ``model_note`` values (e.g. "fitted on 120 trading days
-    before 2023-01-20") have none, which ran straight into the next sentence
-    with no separator."""
-    text = text.strip()
-    if text and text[-1] not in ".!?":
-        text += "."
-    return text
-
-
 def _cls(value: float) -> str:
     return "pos" if value > 0 else "neg" if value < 0 else ""
+
+
+def _headline_item(h: dict) -> str:
+    """One <li> for the source list behind an incident flag.
+
+    Links to the real article and shows its own summary (a genuine meta
+    description/abstract from the source, or a plain-text excerpt of the
+    body - see eventstudy.attach_headlines) so a reader can see what the
+    story actually said without leaving the report, and follow the link to
+    verify it. The URL scheme is checked before being used as an href -
+    scraped data, so treated as untrusted input, not just escaped text.
+    """
+    headline = escape(h.get("headline") or "(no headline)")
+    url = h.get("url") or ""
+    title = (
+        f'<a href="{escape(url)}" target="_blank" rel="noopener noreferrer">{headline}</a>'
+        if url.startswith(("http://", "https://")) else headline
+    )
+    meta = f'[{escape(h.get("source", "?"))}, {escape(h.get("sentiment_label") or "—")}, ' \
+          f'rel={h.get("relevance", 0):.2f}]'
+    summary = h.get("summary") or ""
+    summary_html = f'<div class="src-summary">{escape(summary)}</div>' if summary else ""
+    return f'<li>{title} <span class="src-meta">{meta}</span>{summary_html}</li>'
 
 
 def _pct(value: float, digits: int = 2) -> str:
@@ -176,33 +195,6 @@ def _daily_table(daily: pd.DataFrame, incident_days: set[date],
     )
 
 
-def _emotion_valence_table(emotion_summary: dict) -> str:
-    groups = (emotion_summary or {}).get("groups") or {}
-    if not groups:
-        return ""
-    rows = []
-    for valence in ("positive", "negative", "ambiguous"):
-        g = groups.get(valence)
-        if not g:
-            continue
-        rows.append(
-            f"<tr><td class=\"txt\">{valence}</td><td>{g['n_days']}</td>"
-            f"<td class=\"{_cls(g['mean_abnormal_return'])}\">"
-            f"{_pct(g['mean_abnormal_return'])}</td>"
-            f"<td class=\"{_cls(g['mean_weighted_sentiment'])}\">"
-            f"{g['mean_weighted_sentiment']:+.2f}</td>"
-            f"<td class=\"txt\">{escape(', '.join(g['labels_seen']))}</td></tr>"
-        )
-    if not rows:
-        return ""
-    return (
-        '<div class="scroll"><table><thead><tr><th class="txt">Valence</th>'
-        "<th>Days</th><th>Mean abnormal return</th><th>Mean sentiment</th>"
-        '<th class="txt">Labels seen</th></tr></thead><tbody>'
-        + "".join(rows) + "</tbody></table></div>"
-    )
-
-
 def _incident_table(incidents: list[Incident], window: tuple[int, int],
                     robustness: dict | None = None) -> str:
     if not incidents:
@@ -255,11 +247,10 @@ def _incident_sections(incidents: list[Incident], company: str, benchmark: str,
             f"<p>{text}</p>"
             for text in incident_narrative(inc, company, benchmark, window)
         )
-        sources = "".join(
-            f"<li>{escape(headline)}</li>" for headline in inc.headlines
-        )
+        sources = "".join(_headline_item(h) for h in inc.headlines)
         source_block = (
-            f'<h4 style="margin:16px 0 4px;font-size:.92rem">Coverage behind this flag</h4>'
+            f'<h4 style="margin:16px 0 4px;font-size:.92rem">Coverage behind this flag — '
+            f'linked to the original article, where a source stated one</h4>'
             f'<ul class="src">{sources}</ul>' if sources else ""
         )
         volume_note = ""
@@ -308,19 +299,22 @@ def build_html(analysis) -> str:
     safe_company = escape(config.company)
     safe_benchmark = escape(config.benchmark)
 
+    diagnostics = getattr(analysis, "diagnostics", {}) or {}
+    robustness = getattr(analysis, "robustness", {}) or {}
+    weak_scale = "analysis-window" in str(price.get("ar_scale_source", ""))
+
     summary = "".join(
         f"<p>{text}</p>" for text in summary_narrative(
             safe_company, escape(config.ticker), safe_benchmark,
             config.start, config.end, incidents, len(daily), news_count,
             price.get("model", "market-adjusted"),
+            diagnostics=diagnostics, robustness=robustness, weak_scale=weak_scale,
         )
     )
 
     correlation = getattr(analysis, "correlation", {}) or {}
     corr_display = (f"r = {correlation['r']:+.3f}"
                     if correlation.get("r") is not None else "n/a")
-    emotion_summary = getattr(analysis, "emotion_summary", {}) or {}
-    emotion_table = _emotion_valence_table(emotion_summary)
 
     secondary_meta = getattr(analysis, "secondary_meta", {}) or {}
     secondary_daily = getattr(analysis, "secondary_daily", None)
@@ -328,8 +322,6 @@ def build_html(analysis) -> str:
     daily_display = daily
     if secondary_ticker:
         daily_display = daily.join(secondary_daily[["secondary_abnormal_return"]])
-
-    robustness = getattr(analysis, "robustness", {}) or {}
 
     stats = "".join([
         _stat("Trading days", str(len(daily))),
@@ -341,22 +333,6 @@ def build_html(analysis) -> str:
         _stat("Sentiment/return correlation", corr_display),
     ] + ([_stat(f"Beta vs {secondary_ticker}", f"{secondary_meta.get('beta', float('nan')):.2f}")]
         if secondary_ticker and secondary_meta.get("beta") is not None else []))
-
-    caveats = "".join(f"<li>{escape(note)}</li>" for note in analysis.caveats)
-
-    # Per-source availability, including anything that failed or is disabled.
-    source_rows = []
-    for key, state in (analysis.news_meta.get("source_status") or {}).items():
-        source_rows.append(f"<tr><td>{escape(key)}</td>"
-                           f'<td class="txt">{escape(str(state))}</td></tr>')
-    for key, why in (analysis.news_meta.get("disabled_sources") or {}).items():
-        source_rows.append(f"<tr><td>{escape(key)}</td>"
-                           f'<td class="txt">DISABLED — {escape(str(why))}</td></tr>')
-    source_table = (
-        '<div class="scroll"><table><thead><tr><th>Source</th>'
-        '<th class="txt">Status this run</th></tr></thead><tbody>'
-        + "".join(source_rows) + "</tbody></table></div>"
-    ) if source_rows else '<p class="empty">No source status recorded.</p>'
 
     unattributed = ""
     if analysis.unattributed:
@@ -385,15 +361,6 @@ def build_html(analysis) -> str:
 <div class="sub">{escape(config.ticker)} vs {escape(config.benchmark)} &middot;
 {config.start:%d %B %Y} to {config.end:%d %B %Y} &middot; generated {generated}</div>
 
-<div class="warn">
-<h3>What this report is, and is not</h3>
-<p>This is a <strong>structured case study</strong>, not a statistically validated
-causal finding, and not investment advice. It identifies days where notable news
-coverage <strong>coincided with</strong> an unusual company-specific price move.
-Coincidence in time is not evidence that an article caused a price move.</p>
-<ul>{caveats}</ul>
-</div>
-
 <h2>Summary</h2>
 {summary}
 <div class="grid">{stats}</div>
@@ -415,9 +382,12 @@ exact date and value.</p>
 The ranking orders days for attention; it is not a significance test.
 <em>*Emotion</em> is a secondary, general-purpose signal (GoEmotions) read
 alongside tone, not a substitute for it. <em>**p</em> is a permutation-test
-p-value for the CAR. <em>***Robust</em> counts how many of a small grid of
-threshold combinations still flag this day — see Method and provenance below
-for all three.</p>
+p-value for the CAR — the fraction of random comparable-length windows in
+this stock's own price history with as extreme a move, an alternative to
+the <code>t</code> column that doesn't need to assume a large, independent,
+normally distributed sample. <em>***Robust</em> counts how many of a 3×3
+grid of nearby coverage/return threshold choices still flag this day (9 is
+the most robust; a day flagged in only 1–2 is threshold-sensitive).</p>
 {_incident_table(incidents, config.event_window, robustness)}
 {_incident_sections(incidents, safe_company, safe_benchmark, config.event_window)}
 
@@ -426,54 +396,6 @@ for all three.</p>
 {_daily_table(daily_display, incident_days, secondary_ticker)}
 
 {unattributed}
-
-<h2>Method and provenance</h2>
-<div class="card">
-<p><strong>Abnormal return.</strong> {escape(_sentence(price.get('model_note', '')))}
-Prices came from <code>{escape(str(price.get('company_provider', '?')))}</code>
-(company) and <code>{escape(str(price.get('benchmark_provider', '?')))}</code>
-(benchmark). Abnormal returns are standardised against the
-{escape(str(price.get('ar_scale_source', 'unknown scale')))}.</p>
-<p><strong>CAR significance.</strong> The <code>t</code> column next to CAR
-assumes independent, normally distributed abnormal returns over a large
-sample — an assumption a single company's own handful of trading days does
-not meet, so it is printed only as the conventional figure, not a validated
-one. The <code>p</code> column is a permutation-test alternative that does
-not need that assumption: many random same-length windows are drawn from
-this company's own abnormal-return series (excluding every other flagged
-day, so the null is not contaminated by real events), and <code>p</code> is
-the fraction of those placebo CARs at least as extreme as the real one. It
-is still only valid for this one run on this one company — it says nothing
-about whether the pattern would replicate elsewhere — but it does not
-inherit the independence assumption <code>t</code> does.</p>
-<p><strong>Timestamp alignment.</strong> An item published after the 15:30 IST close is
-attributed to the <em>next</em> trading day, since it could not have moved that day's
-close. {news_stats.get('after_close', 0)} of the collected items fell after the close.</p>
-<p><strong>Sentiment.</strong> Scored with FinBERT, a finance-tuned model, rather than a
-general-purpose sentiment library — ordinary financial phrasing such as "beat
-expectations but missed guidance" is read incorrectly by generic tools. This
-score is what drives incident detection and the abnormal-return-direction
-check above.</p>
-<p><strong>Emotion.</strong> A secondary tag from GoEmotions (Demszky et al.,
-2020), a 27-emotion model trained on Reddit comments — <strong>not</strong> a
-finance-tuned model, and reading formal financial-press prose is a genuine
-domain mismatch. It is included as texture (fear vs. anger vs. disapproval
-alongside a shared "negative" FinBERT score can distinguish, say, a regulatory
-probe from a hostile FPO withdrawal) and never affects relevance, incident
-flagging, or the direction check. Scored on the headline only, and left blank
-below a 30% confidence threshold rather than forced to a low-confidence guess.</p>
-<p><strong>Sentiment/return correlation.</strong>
-{escape(correlation.get('note', 'Not computed.'))} A Pearson correlation
-across a handful of trading days is descriptive, not a significance test —
-treat it as a single additional lens on the same daily table above, not as
-proof that sentiment predicts price.</p>
-{f'<p><strong>Emotion valence vs return.</strong> {escape(emotion_summary.get("note", ""))}</p>{emotion_table}' if emotion_table else ''}
-{f'<p><strong>Secondary benchmark ({escape(secondary_ticker)}).</strong> {escape(secondary_meta.get("note", ""))}</p>' if secondary_ticker else (f'<p><strong>Secondary benchmark.</strong> {escape(secondary_meta["note"])}</p>' if secondary_meta.get("note") else '')}
-{f'<p><strong>Threshold robustness.</strong> {escape(robustness.get("note", ""))}</p>' if robustness.get("days") else ''}
-</div>
-
-<h3>Source availability</h3>
-{source_table}
 
 <div class="foot">
 Generated by the Company Event Impact Analyzer. Descriptive research only —

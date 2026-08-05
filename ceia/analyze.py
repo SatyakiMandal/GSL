@@ -47,6 +47,7 @@ class Analysis:
     secondary_daily: pd.DataFrame | None = None
     secondary_meta: dict = field(default_factory=dict)
     robustness: dict = field(default_factory=dict)
+    diagnostics: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         table = self.daily.reset_index()
@@ -70,6 +71,7 @@ class Analysis:
             "emotion_return_summary": self.emotion_summary,
             "secondary_benchmark": secondary,
             "threshold_robustness": self.robustness,
+            "flagging_diagnostics": self.diagnostics,
             "unattributed_items": [
                 {"url": i.url, "source": i.source, "headline": i.headline,
                  "reason": i.timestamp_confidence}
@@ -130,6 +132,9 @@ def analyse(
     robustness = eventstudy.robustness_check(
         table, frame, incidents, config.event_window,
         coverage_threshold, return_threshold,
+    )
+    diagnostics = eventstudy.flagging_diagnostics(
+        table, coverage_threshold, return_threshold,
     )
 
     secondary_daily = None
@@ -193,6 +198,7 @@ def analyse(
         secondary_daily=secondary_daily,
         secondary_meta=secondary_meta,
         robustness=robustness,
+        diagnostics=diagnostics,
     )
 
 
@@ -218,6 +224,14 @@ def _print(analysis: Analysis) -> None:
     if analysis.unattributed:
         print(f"        {len(analysis.unattributed)} item(s) had no usable "
               f"timestamp and were NOT attributed to any trading day")
+
+    d = analysis.diagnostics
+    if d.get("trading_days"):
+        print(f"Flagging: {d['trading_days']} trading day(s), {d['days_with_news']} "
+              f"with news; {d['candidates']} candidate(s), {d['coverage_only']} "
+              f"busy/toned but ordinary move, {d['return_only']} unusual move but "
+              f"ordinary coverage, {d['no_coverage_big_move']} unusual move with NO "
+              f"coverage collected, {d['routine']} routine")
 
     corr = analysis.correlation
     if corr.get("r") is not None:
@@ -306,8 +320,13 @@ def _print(analysis: Analysis) -> None:
         if robust:
             print(f"   robustness: flagged in {robust['flagged_in']}/{robust['of']} "
                   f"threshold combinations tried")
-        for headline in incident.headlines:
-            print(f"     - {headline[:100]}")
+        for h in incident.headlines:
+            print(f"     - [{h['source']}] {h['headline'][:100]} "
+                  f"({h['sentiment_label']}, rel={h['relevance']:.2f})")
+            if h.get("url"):
+                print(f"       {h['url']}")
+            if h.get("summary"):
+                print(f"       \"{h['summary'][:160]}\"")
 
     print(f"\n{'=' * 74}\nHOW TO READ THIS\n{'=' * 74}")
     for note in analysis.caveats:

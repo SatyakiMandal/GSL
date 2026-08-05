@@ -16,7 +16,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-333 tests
+366 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -123,7 +123,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
 `pip install`, which is why it's not in `.[all]`).
 
 ```bash
-pytest -q     # 333 tests, no network required
+pytest -q     # 366 tests, no network required
 ```
 
 ### Run the spike
@@ -571,8 +571,8 @@ neither changes which days get flagged or how they are scored.
   dependency). Requires at least 3 days with both values present after
   dropping the first trading day's `NaN` return (there is nothing to diff
   against on day one) and any day with no news. Reported as `r`, `r²`, `n`,
-  and a plain-language note — CLI, HTML report ("Method and provenance"), and
-  GUI all surface it. It is one Pearson coefficient over a handful of days;
+  and a plain-language note — CLI, the HTML report's stats grid, and GUI all
+  surface it. It is one Pearson coefficient over a handful of days;
   read as a single extra lens on the daily table, not a significance test.
 * **Trading volume**. Fetched by every price provider already but silently
   discarded before this — `align_series()` now carries it through when
@@ -643,30 +643,63 @@ python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
 
 ### What the report contains
 
-1. **A limitations box, before any finding** — not a footnote. Success Metric #3
-   asks that a reader who did not build the tool understands both the finding
-   *and* its limitations, so the caveats come first.
-2. **Summary narrative** — what was examined, which return model was used, and
-   what was found, in plain language.
-3. **Timeline** (three stacked panels): company vs benchmark rebased to 100,
+The report used to carry two boilerplate sections — "What this report is,
+and is not" and "Method and provenance" — that only repeated what this
+README and the CLI banner already say. Both were removed; the one
+load-bearing sentence from the first ("coincidence in time is not evidence
+that an article caused a price move") was folded into the Summary's opening
+paragraph instead of being dropped, since it's the single most important
+thing a reader needs before the numbers below it.
+
+1. **Summary narrative** — not just what the tool does, but what this run
+   actually found: how many candidate days cleared both bars, the top
+   candidate's date and abnormal return, a plain-language significance
+   read (the top candidate's z-score, the permutation-test p-value when
+   there's a long enough price series to compute one, and how it held up
+   under nearby threshold choices — see
+   [CAR significance](#car-significance-from-a-caveated-t-stat-to-a-permutation-test)
+   and [Sensitivity](#sensitivity-does-a-flag-survive-a-different-threshold)),
+   and — the part a report that only shows the winners can't answer — real
+   counts for *why the rest of the window's days aren't in the table below*:
+   how many had busy or strongly-toned coverage with no matching price move,
+   how many moved unusually with no matching coverage, and how many moved
+   unusually with **no coverage collected for them at all** (flagged
+   explicitly as a gap in this run's sources, not a finding). Backed by
+   `ceia/eventstudy.py:flagging_diagnostics()`, which buckets every trading
+   day against the same two-part test `rank_incidents()` uses, independently.
+2. **Timeline** (three stacked panels): company vs benchmark rebased to 100,
    with a dotted "start of window" reference line; abnormal return bars, axis
    labelled in %; news volume coloured by tone, with a diagonal-hatch overlay
    on negative-tone bars so the signal isn't colour-only for colourblind
    readers. Flagged days get a dashed marker line **and** a numbered badge in
    the top panel matching their rank in the incident table below (badge #1 =
-   the highest-ranked candidate); every bar has a hover tooltip with its exact
-   date and value.
-4. **Ranked incident table** with abnormal return, z, CAR, t, a
-   permutation-test p-value for CAR (see
-   [CAR significance](#car-significance-from-a-caveated-t-stat-to-a-permutation-test)),
-   and a threshold-robustness fraction (see
-   [Sensitivity](#sensitivity-does-a-flag-survive-a-different-threshold)).
-5. **Per-incident narrative** — two to four paragraphs each, plus the source
-   headlines behind the flag.
+   the highest-ranked candidate). Each badge carries its date as a real,
+   always-visible SVG text label underneath it, not just a hover tooltip —
+   `<title>` tooltips don't render when the page is printed to PDF or
+   screenshotted, so the date has to be on the page itself. An in-chart
+   caption above the panels spells out what the numbers and markers mean.
+   Every bar also keeps a hover tooltip with its exact date and value for
+   on-screen use.
+3. **Ranked incident table** with abnormal return, z, CAR, t, a
+   permutation-test p-value for CAR, and a threshold-robustness fraction,
+   with the column footnotes explaining each inline (there's no longer a
+   separate "Method and provenance" section to point to).
+4. **Per-incident narrative** — two to four paragraphs each: what the price
+   did, what was being written and by how many outlets, a plain-language
+   explanation of *why that category of news* (earnings, regulatory,
+   leadership, litigation, M&A, capital, product, macro) is the kind that
+   plausibly moves a price the way it did — a mechanism, not a claim about
+   the specific article — whether tone and price direction agree, and
+   whether the move persisted or reversed over the event window.
+5. **Coverage behind each flag** — the source headlines, each linked to the
+   original article (only when the collected URL is `http(s)`; anything else
+   renders as plain text, defense-in-depth against untrusted scraped data),
+   with the outlet, tone and relevance, and a real one- to two-sentence
+   summary of what the article was actually about (the source's own meta
+   description/JSON-LD abstract when it published one, else a plain-text
+   excerpt of the extracted body).
 6. **Daily detail table**, flagged rows highlighted, with a `Volume` column
    when the price provider supplied one.
-7. **Method and provenance** — price providers used, model note, timestamp
-   alignment, and per-source availability including anything disabled.
 
 ### Narrative is template-based, not model-generated
 

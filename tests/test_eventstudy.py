@@ -19,6 +19,7 @@ from ceia.eventstudy import (  # noqa: E402
     build_daily_table,
     caveats,
     emotion_valence_summary,
+    flagging_diagnostics,
     rank_incidents,
     robustness_check,
     sentiment_return_correlation,
@@ -616,3 +617,108 @@ class TestEmotionValenceSummary:
         table = pd.DataFrame({"abnormal_return": [0.01, -0.02]})
         result = emotion_valence_summary(table)
         assert result["groups"] == {}
+
+
+class TestFlaggingDiagnostics:
+    """Every trading day, bucketed by which of the two flagging bars it
+    cleared - the source of the report's "why the rest were dropped" text.
+    """
+
+    def _mixed_window(self):
+        """15 trading days, one of each bucket, plus a run of routine days.
+
+        Day 3 gets busy negative coverage *and* an unusual move (a
+        candidate); day 6 gets the same busy negative coverage but an
+        ordinary move (coverage_only); day 9 gets an unusual move but only
+        the same one ordinary story every other day gets (return_only); day
+        12 gets an unusual move with no coverage collected at all
+        (no_coverage_big_move); everything else is routine. 14 of the 15
+        days carry some news, comfortably clearing MIN_DAYS_FOR_BASELINE so
+        the coverage bar is the real z-test, not the thin-baseline relaxation.
+        """
+        days = [date(2023, 1, d) for d in range(2, 21) if date(2023, 1, d).weekday() < 5]
+        candidate_day, coverage_only_day = days[3], days[6]
+        return_only_day, no_coverage_day = days[9], days[12]
+        returns = {d: (0.001, 0.0005) for d in days}
+        for d in (candidate_day, return_only_day, no_coverage_day):
+            returns[d] = (-0.15, 0.0)
+        frame = price_frame(returns)
+
+        news = []
+        for d in days:
+            if d == no_coverage_day:
+                continue
+            busy = d in (candidate_day, coverage_only_day)
+            for k in range(8 if busy else 1):
+                news.append(item(d, -0.8 if busy else 0.0, url=f"{d}-{k}"))
+
+        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
+        return table, {
+            "candidate": candidate_day, "coverage_only": coverage_only_day,
+            "return_only": return_only_day, "no_coverage": no_coverage_day,
+        }
+
+    def test_buckets_every_trading_day_correctly(self):
+        table, marked = self._mixed_window()
+        diag = flagging_diagnostics(table)
+        assert diag["trading_days"] == 15
+        assert diag["days_with_news"] == 14
+        assert diag["thin_baseline"] is False
+        assert diag["candidates"] == 1
+        assert diag["coverage_only"] == 1
+        assert diag["return_only"] == 1
+        assert diag["no_coverage_big_move"] == 1
+        assert diag["routine"] == 11
+        total = (diag["candidates"] + diag["coverage_only"] + diag["return_only"]
+                + diag["no_coverage_big_move"] + diag["routine"])
+        assert total == diag["trading_days"]
+
+    def test_candidates_count_matches_rank_incidents(self):
+        """The two independent tallies must never disagree with each other."""
+        table, marked = self._mixed_window()
+        frame = price_frame({d: (0.001, 0.0005) for d in
+                             [date(2023, 1, d) for d in range(2, 21)
+                              if date(2023, 1, d).weekday() < 5]})
+        diag = flagging_diagnostics(table)
+        incidents = rank_incidents(table, frame, return_threshold=1.5)
+        assert diag["candidates"] == len(incidents)
+
+    def test_empty_table_returns_zeroed_dict_with_all_keys(self):
+        diag = flagging_diagnostics(pd.DataFrame())
+        assert diag == {
+            "trading_days": 0, "days_with_news": 0, "thin_baseline": False,
+            "candidates": 0, "coverage_only": 0, "return_only": 0,
+            "no_coverage_big_move": 0, "routine": 0,
+        }
+
+    def test_thin_baseline_forces_any_coverage_to_count_as_unusual(self):
+        """Below MIN_DAYS_FOR_BASELINE, a single ordinary story is enough to
+        clear the (relaxed) coverage bar, same relaxation rank_incidents applies."""
+        days = [date(2023, 1, d) for d in (23, 24, 25, 27, 30)]
+        frame = price_frame({
+            days[0]: (0.005, 0.004), days[1]: (0.002, 0.003),
+            days[2]: (-0.20, -0.01), days[3]: (-0.02, -0.015), days[4]: (0.01, 0.005),
+        })
+        news = [item(days[2], -0.9, url=f"n{i}", event="regulatory") for i in range(6)]
+        news.append(item(days[0], 0.1, url="quiet"))
+        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
+        diag = flagging_diagnostics(table, return_threshold=1.0)
+        assert diag["thin_baseline"] is True
+        assert diag["candidates"] == 1
+        # days[0]'s single quiet story clears the relaxed bar but the move
+        # doesn't, so it lands in coverage_only rather than routine.
+        assert diag["coverage_only"] == 1
+
+    def test_all_routine_when_nothing_is_unusual(self):
+        """Uniform coverage and returns across a window long enough (>=
+        MIN_DAYS_FOR_BASELINE) that the real z-test applies rather than the
+        thin-baseline relaxation - identical days give every z-score 0.0,
+        clearing neither bar, so every day should land as routine."""
+        days = [date(2023, 1, d) for d in range(2, 21) if date(2023, 1, d).weekday() < 5]
+        frame = price_frame({d: (0.001, 0.0008) for d in days})
+        news = [item(d, 0.0, url=f"{d}") for d in days]
+        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
+        diag = flagging_diagnostics(table, return_threshold=1.5)
+        assert diag["thin_baseline"] is False
+        assert diag["candidates"] == 0
+        assert diag["routine"] == diag["trading_days"]

@@ -78,7 +78,11 @@ class Incident:
     score: float
     direction_agrees: bool
     car: dict = field(default_factory=dict)
-    headlines: list[str] = field(default_factory=list)
+    # One dict per source article behind this flag: source, headline, url,
+    # sentiment_label, relevance, and a real summary (the article's own
+    # meta description/JSON-LD abstract where the source provides one,
+    # else a plain-text excerpt of the body) - see attach_headlines().
+    headlines: list[dict] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -319,16 +323,108 @@ def rank_incidents(
     return incidents[:top_n] if top_n else incidents
 
 
+def flagging_diagnostics(
+    table: pd.DataFrame,
+    coverage_threshold: float = DEFAULT_COVERAGE_Z,
+    return_threshold: float = DEFAULT_RETURN_Z,
+) -> dict:
+    """Why the few candidate days were kept and the rest were not.
+
+    ``rank_incidents()`` only reports the days that cleared both bars. That
+    tells a reader *what* survived, not *why* the rest didn't - a report
+    that only shows the winners looks arbitrary. This buckets every trading
+    day in the window against the same two-part test (unusual coverage AND
+    unusual abnormal return) so the Summary can say, with real counts, how
+    many days were routine, how many had unusual coverage that didn't move
+    the price, and - a real gap worth naming rather than hiding - how many
+    days had an unusually large move with no collected coverage to explain
+    it at all.
+    """
+    if table.empty:
+        return {
+            "trading_days": 0, "days_with_news": 0, "thin_baseline": False,
+            "candidates": 0, "coverage_only": 0, "return_only": 0,
+            "no_coverage_big_move": 0, "routine": 0,
+        }
+
+    days_with_news = int((table["unique_count"] > 0).sum())
+    thin_baseline = days_with_news < MIN_DAYS_FOR_BASELINE
+
+    candidates = coverage_only = return_only = routine = 0
+    no_coverage_quiet = no_coverage_big_move = 0
+
+    for _, row in table.iterrows():
+        has_news = row["unique_count"] > 0
+        return_unusual = abs(row["abnormal_return_z"]) >= return_threshold
+        if not has_news:
+            if return_unusual:
+                no_coverage_big_move += 1
+            else:
+                no_coverage_quiet += 1
+            continue
+        if thin_baseline:
+            coverage_unusual = True
+        else:
+            coverage_unusual = (row["coverage_z"] >= coverage_threshold
+                                or abs(row["sentiment_z"]) >= coverage_threshold)
+        if coverage_unusual and return_unusual:
+            candidates += 1
+        elif coverage_unusual:
+            coverage_only += 1
+        elif return_unusual:
+            return_only += 1
+        else:
+            routine += 1
+
+    return {
+        "trading_days": len(table),
+        "days_with_news": days_with_news,
+        "thin_baseline": thin_baseline,
+        "candidates": candidates,
+        "coverage_only": coverage_only,
+        "return_only": return_only,
+        "no_coverage_big_move": no_coverage_big_move,
+        "routine": routine + no_coverage_quiet,
+    }
+
+
+def _excerpt(text: str, max_len: int = 220) -> str:
+    """A plain-text summary fallback when a source gave no meta description.
+
+    Cut at the last whole word inside the limit rather than mid-word, so a
+    reader isn't left staring at a truncated fragment like "...derivativ".
+    """
+    text = " ".join(text.split())  # collapse whitespace/newlines from body extraction
+    if len(text) <= max_len:
+        return text
+    cut = text[:max_len].rsplit(" ", 1)[0]
+    return cut + "…"
+
+
 def attach_headlines(incidents: list[Incident], items: list[NewsItem],
                      limit: int = 5) -> list[Incident]:
-    """Hang the source items behind each flag onto the incident (Section 8)."""
+    """Hang the source articles behind each flag onto the incident (Section 8).
+
+    Each entry carries the real article URL and a real summary - the
+    source's own meta description/JSON-LD abstract (``NewsItem.snippet``)
+    where available, else a plain-text excerpt of the extracted body - so a
+    reader can follow the link and see what the story actually said, not
+    just its headline.
+    """
     for incident in incidents:
         relevant = [i for i in items
                     if i.trading_day == incident.day and i.duplicate_of is None]
         relevant.sort(key=lambda i: (-abs(i.sentiment_score), -i.relevance_score))
         incident.headlines = [
-            f"[{i.source}] {i.headline} ({i.sentiment_label}, "
-            f"rel={i.relevance_score:.2f})"
+            {
+                "source": i.source,
+                "headline": i.headline,
+                "url": i.url,
+                "sentiment_label": i.sentiment_label,
+                "relevance": round(i.relevance_score, 2),
+                "summary": (i.snippet.strip() if i.snippet.strip()
+                           else _excerpt(i.body) if i.body else ""),
+            }
             for i in relevant[:limit]
         ]
     return incidents

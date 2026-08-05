@@ -134,9 +134,17 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
     n = len(dates)
     xs = _x_positions(n, WIDTH)
 
+    # Reserved only when there is something to caption. The caption exists
+    # because a numbered badge with no on-chart explanation is only
+    # meaningful to a reader who also has the paragraph above the chart in
+    # front of them - true in a browser, not true once the SVG is printed,
+    # screenshotted, or embedded in a PDF on its own (see ceia/pdf.py).
+    has_badges = bool(incidents)
+    top_caption_h = 18.0 if has_badges else 0.0
+
     price_h, abn_h, cov_h = 190.0, 130.0, 110.0
     gap = 46.0
-    price_y = PAD_TOP
+    price_y = PAD_TOP + top_caption_h
     abn_y = price_y + price_h + gap
     cov_y = abn_y + abn_h + gap
     total_h = cov_y + cov_h + LABEL_BAND + 14
@@ -153,6 +161,13 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
         'patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'
         '<line x1="0" y1="0" x2="0" y2="6" class="hatch-line"/></pattern></defs>'
     ]
+    if has_badges:
+        parts.append(
+            f'<text x="{PAD_LEFT}" y="{PAD_TOP - 4:.1f}" class="chart-caption">'
+            "Numbered circles mark the ranked candidate incident days below, "
+            "each dated underneath — hover any bar for its exact date and "
+            "value.</text>"
+        )
 
     # ---- Panel 1: rebased price vs benchmark -----------------------------
     closes = daily["close"].astype(float).tolist()
@@ -207,6 +222,20 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
             f'<circle cx="{x:.1f}" cy="{badge_cy:.1f}" r="{badge_r}"/>'
             f'<text x="{x:.1f}" y="{badge_cy + 3.5:.1f}" text-anchor="middle">{rank}</text>'
             f"<title>{tooltip}</title></g>"
+        )
+        # The date each badge refers to, always visible - not only in the
+        # <title> tooltip, which needs a mouse hover and so renders as
+        # nothing at all once this SVG is screenshotted or exported to PDF
+        # (see ceia/pdf.py). A small background rect keeps it legible where
+        # it crosses the price lines behind it.
+        date_label = f"{day:%d %b}"
+        label_y = badge_cy + badge_r + 11.0
+        label_w = len(date_label) * 5.4 + 6.0
+        parts.append(
+            f'<rect x="{x - label_w / 2:.1f}" y="{label_y - 9.0:.1f}" '
+            f'width="{label_w:.1f}" height="12" rx="2" class="badge-date-bg"/>'
+            f'<text x="{x:.1f}" y="{label_y:.1f}" text-anchor="middle" '
+            f'class="badge-date">{date_label}</text>'
         )
 
     # The legend sits in the title row rather than inside the plot: a flat

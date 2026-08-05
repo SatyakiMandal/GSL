@@ -45,7 +45,12 @@ def make_incident(**kwargs) -> Incident:
         direction_agrees=True,
         car={"car": -0.3034, "days": 5, "start": "2023-01-24",
              "end": "2023-01-30", "t_stat": -12.84, "truncated": False, "note": ""},
-        headlines=["[business_line] Adani shares tank (negative, rel=1.00)"],
+        headlines=[{
+            "source": "business_line", "headline": "Adani shares tank",
+            "url": "https://www.thehindubusinessline.com/adani-shares-tank/",
+            "sentiment_label": "negative", "relevance": 1.00,
+            "summary": "Adani group shares fell sharply after the report's allegations.",
+        }],
         sources=["business_line", "financial_express"],
     )
     defaults.update(kwargs)
@@ -269,11 +274,55 @@ class TestCharts:
         svg = timeline_svg(make_analysis().daily, set(), "X", "^NSEI")
         assert svg.count('fill="url(#neg-hatch)"') == 2
 
+    def test_badge_has_an_always_visible_dated_label(self):
+        """SVG <title> tooltips don't render in PDF/print/screenshot contexts,
+        so the date must be a real visible text element, not just a hover."""
+        incident = make_incident(day=date(2023, 1, 25))
+        svg = timeline_svg(make_analysis().daily, {date(2023, 1, 25)}, "X", "^NSEI",
+                           incidents=[incident])
+        assert 'class="badge-date"' in svg
+        assert 'class="badge-date-bg"' in svg
+        assert ">25 Jan<" in svg
+
+    def test_caption_explains_the_badges_when_incidents_are_present(self):
+        incident = make_incident(day=date(2023, 1, 25))
+        svg = timeline_svg(make_analysis().daily, {date(2023, 1, 25)}, "X", "^NSEI",
+                           incidents=[incident])
+        assert 'class="chart-caption"' in svg
+        assert "Numbered circles mark the ranked candidate incident days" in svg
+
+    def test_no_caption_or_badge_markup_when_incidents_list_is_empty(self):
+        svg = timeline_svg(make_analysis().daily, {date(2023, 1, 25)}, "X", "^NSEI",
+                           incidents=[])
+        assert 'class="chart-caption"' not in svg
+        assert 'class="badge-date"' not in svg
+
+    def test_no_caption_or_badge_markup_when_incidents_not_passed(self):
+        svg = timeline_svg(make_analysis().daily, {date(2023, 1, 25)}, "X", "^NSEI")
+        assert 'class="chart-caption"' not in svg
+        assert 'class="badge-date"' not in svg
+
+    def test_multiple_badges_each_get_their_own_date_label(self):
+        days = pd.to_datetime(["2023-01-24", "2023-01-25", "2023-01-27"])
+        frame = make_analysis().daily
+        incidents = [make_incident(day=date(2023, 1, 25)),
+                    make_incident(day=date(2023, 1, 27))]
+        svg = timeline_svg(frame, {date(2023, 1, 25), date(2023, 1, 27)},
+                           "X", "^NSEI", incidents=incidents)
+        assert ">25 Jan<" in svg
+        assert ">27 Jan<" in svg
+        assert svg.count('class="badge-date-bg"') == 2
+
 
 class TestHtmlReport:
     def test_is_self_contained(self):
+        """No external *dependency* the page needs in order to render or
+        function offline (stylesheet, script, image, font). A citation link
+        to a source article (<a href>) is not a rendering dependency - the
+        page is still one self-contained file without it ever resolving."""
         html = build_html(make_analysis())
-        assert not re.search(r'(?:src|href)="https?://', html), "external asset"
+        assert not re.search(r'<link[^>]+href="https?://', html), "external stylesheet/font"
+        assert not re.search(r'<(?:script|img)[^>]+src="https?://', html), "external script/image"
         assert "@import" not in html
         assert "<script" not in html.lower(), "no scripts needed"
 
@@ -303,7 +352,7 @@ class TestHtmlReport:
         }
         html = build_html(analysis)
         assert "9/9" in html
-        assert "Threshold robustness" in html
+        assert "Robust" in html
 
     def test_missing_robustness_does_not_crash(self):
         """FakeAnalysis in these tests has no robustness attribute at all;
@@ -312,8 +361,13 @@ class TestHtmlReport:
         assert "<svg" in html
 
     def test_limitations_appear_before_findings(self):
+        """PRD Success Metric #3: a reader must hit the non-causation
+        framing before the findings, not after. It now opens the Summary
+        itself (see summary_narrative) rather than living in a separate box
+        a reader could skip past - so it must still land before the
+        candidate-incident findings."""
         html = build_html(make_analysis())
-        warning = html.index("What this report is, and is not")
+        warning = html.index("coincided with")
         findings = html.index("Candidate incident days")
         assert warning < findings, "limitations must precede findings"
 
@@ -323,14 +377,25 @@ class TestHtmlReport:
         assert "not evidence that an article caused a price move" in html
         assert "not investment advice" in html
 
-    def test_caveats_are_rendered(self):
+    def test_no_longer_renders_the_removed_sections(self):
+        """These two sections were deliberately removed: their content had
+        already been presented elsewhere (README, this project's docs), and
+        repeating a full methodology dump on every single generated report
+        was judged not worth the length. This is a regression guard, not a
+        preference - if either heading comes back, it should be a deliberate
+        re-add, not an accidental one."""
         html = build_html(make_analysis())
-        assert "structured case study" in html
+        assert "What this report is, and is not" not in html
+        assert "<h2>Method and provenance</h2>" not in html
+        assert "<h3>Source availability</h3>" not in html
 
     def test_escapes_hostile_headline_text(self):
         """Headlines come from scraped pages and are untrusted input."""
         nasty = '<img src=x onerror="alert(1)"> & "quoted"'
-        analysis = make_analysis(incidents=[make_incident(headlines=[nasty])])
+        analysis = make_analysis(incidents=[make_incident(
+            headlines=[{"headline": nasty, "source": "et", "url": "",
+                       "sentiment_label": "negative", "relevance": 0.9,
+                       "summary": ""}])])
         html = build_html(analysis)
         assert "<img src=x" not in html
         assert "&lt;img" in html
@@ -353,26 +418,12 @@ class TestHtmlReport:
         assert "could not be placed on a trading day" in html
         assert "No timestamp story" in html
 
-    def test_disabled_sources_reported(self):
+    def test_after_close_count_appears_in_the_stats_grid(self):
+        """The explanatory sentence lived in the now-removed Method and
+        provenance section; the underlying number is still surfaced in the
+        stats grid at the top of the report."""
         html = build_html(make_analysis())
-        assert "business_standard" in html
-        assert "DISABLED" in html
-
-    def test_after_close_count_explained(self):
-        html = build_html(make_analysis())
-        assert "15:30 IST close" in html
-        assert "13 of the collected items fell after the close" in html
-
-    def test_finbert_disclosed(self):
-        assert "FinBERT" in build_html(make_analysis())
-
-    def test_goemotions_disclosed_as_secondary_and_not_finance_tuned(self):
-        html = build_html(make_analysis())
-        assert "GoEmotions" in html
-        assert "not</strong> a\nfinance-tuned model" in html or \
-            "not</strong> a finance-tuned model" in html
-        assert "never affects relevance, incident\nflagging" in html or \
-            "never affects relevance, incident flagging" in html
+        assert '<div class="k">Published after close</div><div class="v">13</div>' in html
 
     def test_incident_card_shows_emotion_tag_when_present(self):
         html = build_html(make_analysis(incidents=[make_incident(dominant_emotion="fear")]))
@@ -424,24 +475,3 @@ class TestTimestampIndexHandling:
         assert "bar-incident" in svg
 
 
-class TestModelNotePunctuation:
-    """model_note values from returns.py have no terminal punctuation, and ran
-    straight into "Prices came from..." with no separator. A real user's
-    report showed: "fitted on 120 trading days before 2023-01-20 Prices came
-    from yfinance..." with no full stop between them.
-    """
-
-    def test_period_added_when_missing(self):
-        from ceia.report import _sentence
-        assert _sentence("fitted on 120 trading days before 2023-01-20") == \
-            "fitted on 120 trading days before 2023-01-20."
-
-    def test_existing_punctuation_not_doubled(self):
-        from ceia.report import _sentence
-        assert _sentence("already ends with a period.") == "already ends with a period."
-        assert _sentence("ends with a question?") == "ends with a question?"
-
-    def test_appears_correctly_in_the_report(self):
-        html = build_html(make_analysis())
-        assert "days\nPrices came from" not in html  # old bug shape: no period
-        assert "fitted on 120 days.\nPrices came from" in html
