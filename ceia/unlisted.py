@@ -24,11 +24,13 @@ in that same range.
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import logging
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import date
+from html import unescape
 from pathlib import Path
 
 import pandas as pd
@@ -53,6 +55,107 @@ _SERIES_POINT_RE = re.compile(r'\\"(\d{4}-\d{2}-\d{2})\\",(\d+(?:\.\d+)?)')
 
 class UnlistedPriceError(RuntimeError):
     pass
+
+
+class UnlistedCompanyNotFoundError(RuntimeError):
+    pass
+
+
+# UnlistedZone's own `?search=` query parameter is client-side only - a plain
+# GET returns the same unfiltered listing regardless of the query, verified
+# directly. What does work is its /shares directory: a paginated grid of
+# every tracked company, ~24 per page, each card holding the company name
+# (class="nm") and a link to its product page (class="det" href="...").
+# Extracted by position rather than a real HTML parser for the same reason
+# the price-series regex above is: this is scraped, third-party markup with
+# no documented API, not something to build a strict parser against.
+_DIRECTORY_URL = "https://unlistedzone.com/shares"
+_DIRECTORY_NAME_RE = re.compile(r'class="nm">([^<]+)<')
+_DIRECTORY_HREF_RE = re.compile(r'class="det" href="(/shares/[^"]+)"')
+_DIRECTORY_LAST_PAGE_RE = re.compile(r'"lastPage":(\d+)')
+
+# Boilerplate every directory listing repeats regardless of which company it
+# is ("NSE India Limited Unlisted Shares", "Zepto Unlisted Shares (Equity)")
+# - stripped before matching so it cannot drown out the part of the name that
+# actually distinguishes one company from another.
+_DIRECTORY_NOISE_RE = re.compile(
+    r"\b(unlisted shares?|share price|buy\s*(?:/|and)?\s*sell(?:\s*online)?|"
+    r"equity|limited|ltd)\b", re.I)
+
+# Below this similarity score, resolve_unlisted_url() raises rather than
+# guessing - the same rule ceia.ticker_lookup.resolve_ticker() follows for
+# listed tickers.
+_MATCH_THRESHOLD = 0.5
+
+
+def _fetch_directory(fetcher: Fetcher, max_pages: int = 20) -> list[tuple[str, str]]:
+    """Every (company name, product-page URL) pair UnlistedZone's own
+    directory lists, across all its pages (bounded by ``max_pages`` in case
+    the ``lastPage`` marker is ever missing from the response)."""
+    directory: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    last_page = max_pages
+    page = 1
+    while page <= last_page:
+        url = _DIRECTORY_URL if page == 1 else f"{_DIRECTORY_URL}?page={page}"
+        response = fetcher.get(url)
+        hrefs = _DIRECTORY_HREF_RE.findall(response.text)
+        if not hrefs:
+            break
+        if page == 1:
+            match = _DIRECTORY_LAST_PAGE_RE.search(response.text)
+            if match:
+                last_page = min(int(match.group(1)), max_pages)
+        names = _DIRECTORY_NAME_RE.findall(response.text)
+        for name, href in zip(names, hrefs):
+            if href not in seen:
+                seen.add(href)
+                directory.append((unescape(name).strip(), f"https://unlistedzone.com{href}"))
+        page += 1
+    return directory
+
+
+def _normalise_for_match(name: str) -> str:
+    name = re.sub(r"[^\w\s]", " ", name.lower())
+    name = _DIRECTORY_NOISE_RE.sub(" ", name)
+    return " ".join(name.split())
+
+
+def _match_score(query: str, candidate: str) -> float:
+    if not query or not candidate:
+        return 0.0
+    if query in candidate or candidate in query:
+        return 1.0
+    return difflib.SequenceMatcher(None, query, candidate).ratio()
+
+
+def resolve_unlisted_url(company: str, fetcher: Fetcher, max_pages: int = 20) -> str:
+    """Find a company's UnlistedZone product-page URL by name - the same
+    role :func:`ceia.ticker_lookup.resolve_ticker` plays for listed tickers,
+    so ``--url`` is optional for the common case.
+
+    Raises rather than guessing when nothing matches confidently, same rule.
+    """
+    directory = _fetch_directory(fetcher, max_pages=max_pages)
+    if not directory:
+        raise UnlistedCompanyNotFoundError(
+            "UnlistedZone's company directory could not be read")
+
+    query = _normalise_for_match(company)
+    best_name, best_url, best_score = "", "", 0.0
+    for name, url in directory:
+        score = _match_score(query, _normalise_for_match(name))
+        if score > best_score:
+            best_name, best_url, best_score = name, url, score
+
+    if best_score < _MATCH_THRESHOLD:
+        raise UnlistedCompanyNotFoundError(
+            f"no confident match for {company!r} in UnlistedZone's directory "
+            f"({len(directory)} companies checked, best guess was {best_name!r} "
+            f"at {best_score:.2f}) -- pass --url explicitly"
+        )
+    log.info("resolved %r -> %s (%r, score=%.2f)", company, best_url, best_name, best_score)
+    return best_url
 
 
 def fetch_price_series(fetcher: Fetcher, url: str) -> pd.DataFrame:
@@ -233,9 +336,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Price-move/news timeline for an unlisted or pre-IPO share")
     parser.add_argument("--company", required=True)
-    parser.add_argument("--url", required=True,
+    parser.add_argument("--url", default=None,
                         help="UnlistedZone product page, e.g. "
-                             "https://unlistedzone.com/shares/<slug>")
+                             "https://unlistedzone.com/shares/<slug>. "
+                             "Auto-detected from --company if omitted.")
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--alias", action="append", default=[])
@@ -270,9 +374,19 @@ def main() -> None:
         raise SystemExit(2)
 
     fetcher = Fetcher(cache_dir=args.cache_dir, user_agent=args.user_agent)
+
+    url = args.url
+    if not url:
+        try:
+            url = resolve_unlisted_url(args.company, fetcher)
+        except UnlistedCompanyNotFoundError as exc:
+            print(f"\nUnlistedZone lookup failed: {exc}")
+            raise SystemExit(2)
+        print(f"Resolved UnlistedZone URL: {args.company!r} -> {url}")
+
     try:
         analysis = analyse_unlisted(
-            config, args.url, fetcher=fetcher, limit=args.limit,
+            config, url, fetcher=fetcher, limit=args.limit,
             skip_sentiment=args.skip_sentiment, skip_emotion=args.skip_emotion,
             max_workers=args.workers,
         )

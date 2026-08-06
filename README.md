@@ -16,7 +16,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-429 tests
+442 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -123,7 +123,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
 `pip install`, which is why it's not in `.[all]`).
 
 ```bash
-pytest -q     # 429 tests, no network required
+pytest -q     # 442 tests, no network required
 ```
 
 ### Run the spike
@@ -882,10 +882,28 @@ information platform for unlisted and pre-IPO shares.
 
 ```bash
 python -m ceia.unlisted --company "National Stock Exchange of India Limited" \
-  --url https://unlistedzone.com/shares/nse-india-limited-unlisted-shares \
   --alias NSE --start 2026-01-01 --end 2026-07-31 \
   --out out/nse_unlisted.json --html out/nse_unlisted_report.html
 ```
+
+### URL auto-detection
+
+`--url` is optional, mirroring [Ticker auto-detection](#ticker-auto-detection)
+for listed stocks. Give just `--company` and `resolve_unlisted_url()`
+(`ceia/unlisted.py`) walks UnlistedZone's own `/shares` directory — the same
+paginated listing a person browsing the site would see, ~24 companies per
+page — and fuzzy-matches the company name against every card it finds
+(`difflib.SequenceMatcher`, with an automatic perfect score when one name
+contains the other). It prints `Resolved UnlistedZone URL: 'National Stock
+Exchange of India Limited' -> https://unlistedzone.com/shares/...` before
+continuing exactly as if `--url` had been passed directly, and raises rather
+than guessing when nothing clears the same confidence bar `resolve_ticker()`
+uses for listed tickers — pass `--url` explicitly to skip the lookup or work
+around a bad match. UnlistedZone has no server-side search endpoint (its
+`?search=` query parameter is client-side only, verified directly), which is
+why this is a locally-scraped-directory match rather than a single lookup
+call. This is purely additive: it changes nothing about how listed-stock
+runs (`ceia.ingest`, `ceia.analyze`) resolve tickers.
 
 ### This is deliberately not the same tool as Phases 2–4
 

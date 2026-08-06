@@ -22,12 +22,17 @@ from ceia.extract import IST  # noqa: E402
 from ceia.models import NewsItem, RunConfig  # noqa: E402
 from ceia.unlisted import (  # noqa: E402
     PriceMove,
+    UnlistedCompanyNotFoundError,
     UnlistedPriceError,
+    _fetch_directory,
+    _match_score,
+    _normalise_for_match,
     analyse_unlisted,
     attach_news_to_moves,
     fetch_price_series,
     price_moves,
     real_updates,
+    resolve_unlisted_url,
 )
 
 
@@ -53,6 +58,34 @@ class _FakeFetcher:
     def get(self, url: str) -> _FakeResponse:
         self.calls += 1
         return _FakeResponse(self.text)
+
+
+def _directory_page(cards: list[tuple[str, str]], last_page: int | None = None) -> str:
+    """A minimal stand-in for one page of UnlistedZone's real /shares
+    directory: a grid of company cards, each holding a name (class="nm")
+    and a link to its product page (class="det" href="..."), plus the
+    embedded ``"lastPage":N`` marker page 1's real response carries."""
+    cards_html = "".join(
+        f'<div class="card"><div class="nm">{name}</div>'
+        f'<a class="det" href="/shares/{slug}">Details</a></div>'
+        for name, slug in cards
+    )
+    marker = f'{{"lastPage":{last_page}}}' if last_page is not None else ""
+    return f"<html><body>{cards_html}</body>{marker}</html>"
+
+
+class _FakeDirectoryFetcher:
+    """Unlike _FakeFetcher, serves distinct content per exact URL - needed
+    to test pagination, where each page's request must return different
+    cards."""
+
+    def __init__(self, pages: dict[str, str]) -> None:
+        self.pages = pages
+        self.calls: list[str] = []
+
+    def get(self, url: str) -> _FakeResponse:
+        self.calls.append(url)
+        return _FakeResponse(self.pages[url])
 
 
 def _rsc_page(pairs: list[tuple[str, float]]) -> str:
@@ -254,3 +287,97 @@ class TestUnlistedAnalysisIntegration:
         ranked = analysis.ranked_moves()
         assert ranked[0].change == pytest.approx((80 - 105) / 105)  # the -23.8% move
         assert analysis.ranked_moves(top_n=1) == ranked[:1]
+
+
+class TestFetchDirectory:
+    def test_parses_a_single_page_of_cards(self):
+        html = _directory_page([("Alpha Pvt Ltd", "alpha"),
+                                ("Beta Unlisted Shares", "beta")])
+        fetcher = _FakeFetcher(html)
+        directory = _fetch_directory(fetcher, max_pages=1)
+        assert directory == [
+            ("Alpha Pvt Ltd", "https://unlistedzone.com/shares/alpha"),
+            ("Beta Unlisted Shares", "https://unlistedzone.com/shares/beta"),
+        ]
+
+    def test_follows_pagination_via_the_last_page_marker(self):
+        page1 = _directory_page([("Alpha", "alpha"), ("Beta", "beta")], last_page=2)
+        page2 = _directory_page([("Gamma", "gamma"), ("Delta", "delta")])
+        fetcher = _FakeDirectoryFetcher({
+            "https://unlistedzone.com/shares": page1,
+            "https://unlistedzone.com/shares?page=2": page2,
+        })
+        directory = _fetch_directory(fetcher, max_pages=20)
+        assert [name for name, _ in directory] == ["Alpha", "Beta", "Gamma", "Delta"]
+        assert fetcher.calls == [
+            "https://unlistedzone.com/shares",
+            "https://unlistedzone.com/shares?page=2",
+        ]
+
+    def test_stops_when_a_page_has_no_cards(self):
+        """A page beyond the real directory's end (e.g. a stale lastPage
+        marker) must stop the walk rather than requesting further pages
+        that were never registered with the fake fetcher."""
+        page1 = _directory_page([("Alpha", "alpha")], last_page=3)
+        page2 = _directory_page([])
+        fetcher = _FakeDirectoryFetcher({
+            "https://unlistedzone.com/shares": page1,
+            "https://unlistedzone.com/shares?page=2": page2,
+        })
+        directory = _fetch_directory(fetcher, max_pages=20)
+        assert [name for name, _ in directory] == ["Alpha"]
+        assert fetcher.calls == [
+            "https://unlistedzone.com/shares",
+            "https://unlistedzone.com/shares?page=2",
+        ]
+
+    def test_dedupes_by_product_page_href(self):
+        html = _directory_page([("Alpha Pvt Ltd", "alpha"), ("ALPHA PVT LTD", "alpha")])
+        fetcher = _FakeFetcher(html)
+        directory = _fetch_directory(fetcher, max_pages=1)
+        assert len(directory) == 1
+        assert directory[0][0] == "Alpha Pvt Ltd"
+
+
+class TestNormaliseForMatch:
+    def test_strips_directory_boilerplate_and_lowercases(self):
+        assert _normalise_for_match("NSE India Limited Unlisted Shares") == "nse india"
+
+    def test_strips_punctuation(self):
+        assert _normalise_for_match("Sonata Software Ltd.") == "sonata software"
+
+
+class TestMatchScore:
+    def test_containment_scores_perfect(self):
+        assert _match_score("sonata", "sonata software") == 1.0
+
+    def test_empty_inputs_score_zero(self):
+        assert _match_score("", "sonata software") == 0.0
+        assert _match_score("sonata", "") == 0.0
+
+    def test_near_miss_scores_between_zero_and_one(self):
+        score = _match_score("sonta software", "sonata software")
+        assert 0.0 < score < 1.0
+
+    def test_unrelated_strings_score_low(self):
+        assert _match_score("sonata software", "totally different company") < 0.5
+
+
+class TestResolveUnlistedUrl:
+    def test_resolves_the_best_matching_company(self):
+        html = _directory_page([("Sonata Software Limited", "sonata-software"),
+                                ("Sona Comstar Limited", "sona-comstar")])
+        fetcher = _FakeFetcher(html)
+        url = resolve_unlisted_url("Sonata Software", fetcher, max_pages=1)
+        assert url == "https://unlistedzone.com/shares/sonata-software"
+
+    def test_raises_when_no_candidate_is_a_confident_match(self):
+        html = _directory_page([("Totally Unrelated Company", "x")])
+        fetcher = _FakeFetcher(html)
+        with pytest.raises(UnlistedCompanyNotFoundError):
+            resolve_unlisted_url("Sonata Software", fetcher, max_pages=1)
+
+    def test_raises_when_the_directory_cannot_be_read(self):
+        fetcher = _FakeFetcher("<html>nothing here</html>")
+        with pytest.raises(UnlistedCompanyNotFoundError):
+            resolve_unlisted_url("Sonata Software", fetcher, max_pages=1)
