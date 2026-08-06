@@ -18,9 +18,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from .charts import timeline_svg
+from .charts import price_level_svg, timeline_svg
 from .eventstudy import Incident
 from .narrative import incident_narrative, summary_narrative
+from .unlisted import real_updates
+from .unlisted_narrative import move_narrative, unlisted_summary_narrative
 
 CSS = """
 :root{--bg:#fbfbfa;--fg:#1c1b19;--muted:#6b6862;--line:#e3e1dc;--card:#fff;
@@ -75,6 +77,7 @@ stroke-linejoin:round;stroke-linecap:round}
 .incident-badge text{fill:#fff;font-size:10px;font-weight:700;font-family:inherit}
 .badge-date-bg{fill:var(--plot);opacity:.88}
 .badge-date{fill:var(--warn-br);font-size:9px;font-weight:700;font-family:inherit}
+.real-point{fill:var(--accent);stroke:var(--card);stroke-width:1}
 .chart-caption{fill:var(--muted);font-size:10.5px;font-style:italic}
 .bar-pos{fill:var(--pos)}.bar-neg{fill:var(--neg)}
 .bar-incident{stroke:var(--warn-br);stroke-width:1.4}
@@ -409,4 +412,148 @@ def write_report(analysis, path: Path | str) -> Path:
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(build_html(analysis), encoding="utf-8")
+    return out
+
+
+def _move_table(moves: list) -> str:
+    if not moves:
+        return ('<p class="empty">Not enough price revisions in this window '
+                "to identify a move.</p>")
+    rows = []
+    for rank, move in enumerate(moves, 1):
+        rows.append(
+            f"<tr><td>{rank}</td>"
+            f"<td>{move.start_date:%d %b %Y} – {move.end_date:%d %b %Y}</td>"
+            f"<td>₹{move.start_price:,.2f}</td>"
+            f"<td>₹{move.end_price:,.2f}</td>"
+            f"<td class=\"{_cls(move.change)}\"><strong>{_pct(move.change)}</strong></td>"
+            f"<td>{len(move.headlines)}</td></tr>"
+        )
+    return (
+        '<div class="scroll"><table><thead><tr>'
+        "<th>#</th><th>Date range</th><th>Start</th><th>End</th>"
+        "<th>Change</th><th>Items</th></tr></thead><tbody>"
+        + "".join(rows) + "</tbody></table></div>"
+    )
+
+
+def _move_sections(moves: list, company: str) -> str:
+    if not moves:
+        return ""
+    blocks = []
+    for rank, move in enumerate(moves, 1):
+        paragraphs = "".join(f"<p>{text}</p>" for text in move_narrative(move, company))
+        sources = "".join(_headline_item(h) for h in move.headlines)
+        source_block = (
+            '<h4 style="margin:16px 0 4px;font-size:.92rem">Coverage in this '
+            'window — linked to the original article, where a source stated '
+            f'one</h4><ul class="src">{sources}</ul>' if sources else ""
+        )
+        blocks.append(
+            f'<div class="incident"><h3><span class="rank">#{rank}</span>'
+            f"{move.start_date:%d %b %Y} – {move.end_date:%d %b %Y}</h3>"
+            f'<div><span class="tag">{_pct(move.change)}</span>'
+            f'<span class="tag">{len(move.headlines)} item(s)</span></div>'
+            f"{paragraphs}{source_block}</div>"
+        )
+    return "".join(blocks)
+
+
+def build_unlisted_html(analysis) -> str:
+    """Render a :class:`ceia.unlisted.UnlistedAnalysis` as a standalone HTML
+    document.
+
+    A distinct template from :func:`build_html`, not a bent version of it —
+    see ``ceia/unlisted.py``'s module docstring for why: no z, CAR, t, p, or
+    Robust column here, because none of those are earned by a periodically
+    revised indicative price.
+    """
+    config = analysis.config
+    safe_company = escape(config.company)
+    ranked = analysis.ranked_moves()
+
+    news_stats = analysis.news_meta.get("stats", {}) or {}
+    news_count = news_stats.get("unique_after_dedupe")
+    if news_count is None:
+        news_count = news_stats.get("relevant", 0)
+
+    calendar_days = (config.end - config.start).days + 1
+
+    summary = "".join(
+        f"<p>{text}</p>" for text in unlisted_summary_narrative(
+            safe_company, config.start, config.end, ranked, calendar_days, news_count,
+        )
+    )
+
+    real = real_updates(analysis.series)
+    real_dates = {pd.Timestamp(d).date() for d in real.index}
+
+    stats = "".join([
+        _stat("Calendar days", str(calendar_days)),
+        _stat("Price revisions", str(len(real))),
+        _stat("Notable moves", str(len(ranked))),
+        _stat("News items", str(news_count)),
+    ])
+
+    unattributed = ""
+    if analysis.unattributed:
+        items = "".join(
+            f"<li>[{escape(i.source)}] {escape(i.headline)}</li>"
+            for i in analysis.unattributed[:20]
+        )
+        unattributed = (
+            f'<div class="warn"><h3>{len(analysis.unattributed)} item(s) could '
+            f"not be placed in a price-move window</h3><p>These had no readable "
+            f"publication timestamp, so there is no date to compare against the "
+            f"price series.</p>"
+            f'<ul class="src">{items}</ul></div>'
+        )
+
+    generated = datetime.now().strftime("%d %B %Y at %H:%M")
+
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{escape(config.company)} — unlisted price timeline</title>
+<style>{CSS}</style></head><body><div class="wrap">
+
+<h1>{escape(config.company)} — indicative price and news timeline</h1>
+<div class="sub">Unlisted / pre-IPO &middot;
+{config.start:%d %B %Y} to {config.end:%d %B %Y} &middot; generated {generated}</div>
+
+<h2>Summary</h2>
+{summary}
+<div class="grid">{stats}</div>
+
+<h2>Price timeline</h2>
+<p>The line shows the indicative price exactly as UnlistedZone displays it —
+held flat between revisions, not observed daily. Small dots mark the dates the
+price was actually revised; everywhere else is a forward-filled display value,
+not a new observation. Dashed vertical lines and numbered badges mark the
+ranked price moves below.</p>
+{price_level_svg(analysis.series, real_dates, config.company, moves=ranked)}
+
+<h2>Notable price moves</h2>
+<p>Ranked by the size of the raw change between one price revision and the
+next. This is a description of what changed and what was published in the
+same window, not a significance test — see the Summary above for why no
+z-score, market-model beta, or permutation p-value is computed here.</p>
+{_move_table(ranked)}
+{_move_sections(ranked, safe_company)}
+
+{unattributed}
+
+<div class="foot">
+Generated by the Company Event Impact Analyzer. Descriptive research only —
+not investment advice, and not a claim of causation. Indicative prices via
+UnlistedZone; not a price feed, quote, or offer to deal.
+</div>
+
+</div></body></html>"""
+
+
+def write_unlisted_report(analysis, path: Path | str) -> Path:
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(build_unlisted_html(analysis), encoding="utf-8")
     return out

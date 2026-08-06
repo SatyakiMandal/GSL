@@ -44,6 +44,7 @@ all = [
 ceia-probe = "ceia.probe:main"
 ceia-ingest = "ceia.ingest:main"
 ceia-analyze = "ceia.analyze:main"
+ceia-unlisted = "ceia.unlisted:main"
 
 [tool.setuptools]
 packages = ["ceia"]

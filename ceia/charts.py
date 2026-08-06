@@ -317,3 +317,105 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
     )
     parts.append("</svg>")
     return "".join(parts)
+
+
+def price_level_svg(series: pd.DataFrame, real_dates: set[date],
+                    company: str, moves: list | None = None) -> str:
+    """A single panel: an unlisted share's indicative price level over time.
+
+    ``series`` is the as-displayed daily frame (forward-fill included) -
+    the same convention UnlistedZone's own chart uses, so the line matches
+    what a reader would see there. ``real_dates`` marks which of those days
+    were genuine revisions with a small dot; everywhere else the line is
+    held flat, not observed. ``moves`` (optional, ranked) gets the same
+    numbered-badge-with-dated-label treatment ``timeline_svg`` uses for
+    incidents, so a reader can tell which ranked price-move gap is which.
+    """
+    if series.empty:
+        return '<p class="empty">No price data in the analysis window.</p>'
+
+    dates = [pd.Timestamp(d).date() for d in series.index]
+    n = len(dates)
+    xs = _x_positions(n, WIDTH)
+    closes = series["close"].astype(float).tolist()
+
+    move_rank: dict[date, int] = {}
+    move_tooltip: dict[date, str] = {}
+    for rank, move in enumerate(moves or [], 1):
+        move_rank[move.end_date] = rank
+        move_tooltip[move.end_date] = (
+            f"#{rank} {move.start_date:%d %b %Y} to {move.end_date:%d %b %Y}: "
+            f"{move.change * 100:+.2f}% — see the ranked list below"
+        )
+
+    has_badges = bool(moves)
+    top_caption_h = 18.0 if has_badges else 0.0
+    price_h = 260.0
+    price_y = PAD_TOP + top_caption_h
+    total_h = price_y + price_h + LABEL_BAND + 14
+
+    parts = [
+        f'<svg viewBox="0 0 {WIDTH} {total_h:.0f}" class="timeline" '
+        f'preserveAspectRatio="xMidYMid meet" role="img" '
+        f'aria-label="Indicative price timeline">'
+    ]
+    if has_badges:
+        parts.append(
+            f'<text x="{PAD_LEFT}" y="{PAD_TOP - 4:.1f}" class="chart-caption">'
+            "Numbered circles mark the ranked price moves below, each dated "
+            "underneath. Dots are real revisions — elsewhere the line is flat, "
+            "not observed.</text>"
+        )
+
+    low, high = min(closes), max(closes)
+    span = (high - low) or 1.0
+    low, high = low - span * 0.08, high + span * 0.08
+
+    def price_y_of(v: float) -> float:
+        return price_y + price_h - (v - low) / (high - low) * price_h
+
+    parts.append(_panel_frame(price_y, price_h, f"{company} — indicative price (₹)"))
+    parts.append(_y_axis(price_y, price_h, low, high, "{:,.0f}"))
+
+    points = " ".join(f"{x:.1f},{price_y_of(v):.1f}" for x, v in zip(xs, closes))
+    parts.append(f'<polyline points="{points}" class="line-company"/>')
+
+    badge_r = 9.0
+    badge_cy = price_y + 15.0
+    for x, day, value in zip(xs, dates, closes):
+        if day in real_dates:
+            parts.append(
+                f'<circle cx="{x:.1f}" cy="{price_y_of(value):.1f}" r="2.5" '
+                f'class="real-point"><title>{day:%d %b %Y}: ₹{value:,.2f} '
+                "(revised)</title></circle>"
+            )
+        rank = move_rank.get(day)
+        if rank is None:
+            continue
+        parts.append(
+            f'<line x1="{x:.1f}" y1="{price_y:.1f}" x2="{x:.1f}" '
+            f'y2="{price_y + price_h:.1f}" class="incident-rule"/>'
+        )
+        tooltip = escape(move_tooltip.get(day, f"{day:%d %b %Y}: price move"))
+        parts.append(
+            f'<g class="incident-badge">'
+            f'<circle cx="{x:.1f}" cy="{badge_cy:.1f}" r="{badge_r}"/>'
+            f'<text x="{x:.1f}" y="{badge_cy + 3.5:.1f}" text-anchor="middle">{rank}</text>'
+            f"<title>{tooltip}</title></g>"
+        )
+        date_label = f"{day:%d %b}"
+        label_y = badge_cy + badge_r + 11.0
+        label_w = len(date_label) * 5.4 + 6.0
+        parts.append(
+            f'<rect x="{x - label_w / 2:.1f}" y="{label_y - 9.0:.1f}" '
+            f'width="{label_w:.1f}" height="12" rx="2" class="badge-date-bg"/>'
+            f'<text x="{x:.1f}" y="{label_y:.1f}" text-anchor="middle" '
+            f'class="badge-date">{date_label}</text>'
+        )
+
+    parts.append(
+        f'<g transform="translate(0,{price_y + price_h + 16:.1f})">'
+        f'{_date_labels(dates, xs)}</g>'
+    )
+    parts.append("</svg>")
+    return "".join(parts)

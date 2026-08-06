@@ -16,7 +16,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-385 tests
+429 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -112,9 +112,9 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -e ".[all]"
 ```
 
-That installs three commands: `ceia-probe`, `ceia-ingest`, `ceia-analyze`.
-They are the same entry points as `python -m ceia.probe` and friends, which
-still work without installing.
+That installs four commands: `ceia-probe`, `ceia-ingest`, `ceia-analyze`,
+`ceia-unlisted`. They are the same entry points as `python -m ceia.probe`
+and friends, which still work without installing.
 
 Lighter installs: `pip install -e .` for scraping only, `.[sentiment]` to add
 FinBERT and GoEmotions, `.[prices]` for `yfinance`, `.[gui]` for the Streamlit
@@ -123,7 +123,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
 `pip install`, which is why it's not in `.[all]`).
 
 ```bash
-pytest -q     # 385 tests, no network required
+pytest -q     # 429 tests, no network required
 ```
 
 ### Run the spike
@@ -872,6 +872,89 @@ thread to whichever thread is calling the handler at that moment, plus a lock
 around the actual render so concurrent callers cannot interleave a torn one.
 Regression-tested by hammering the handler from 40 concurrent threads.
 
+---
+
+## Phase 5 — Unlisted / pre-IPO shares
+
+Added on request, for shares that trade over-the-counter rather than on NSE
+or BSE — priced via [UnlistedZone](https://unlistedzone.com/), an
+information platform for unlisted and pre-IPO shares.
+
+```bash
+python -m ceia.unlisted --company "National Stock Exchange of India Limited" \
+  --url https://unlistedzone.com/shares/nse-india-limited-unlisted-shares \
+  --alias NSE --start 2026-01-01 --end 2026-07-31 \
+  --out out/nse_unlisted.json --html out/nse_unlisted_report.html
+```
+
+### This is deliberately not the same tool as Phases 2–4
+
+An unlisted share's price is not the same kind of number as a listed one,
+and pretending otherwise would have made this section a worse, quieter
+version of the bug the rest of this project spends its effort avoiding.
+
+Checked directly against UnlistedZone's own data before writing a line of
+this: one real company's chart carries a dated point for **1,321** of the
+calendar days between September 2021 and August 2026 — but only **156** of
+those are genuine price revisions; the rest hold the last real number flat
+until UnlistedZone's own team revises it again. The site says so itself:
+its prices are *"indicative levels compiled by our team for information
+only — not a price feed, quote, or offer to deal."* That is not daily price
+discovery, so none of the listed-stock machinery that depends on one — a
+market-model beta, a z-score standardised against daily volatility, a
+permutation test against a daily null — has anything valid to stand on
+here. Forward-filling the gaps to make the series *look* daily (an earlier
+idea, tried and rejected) would not fix this: it would artificially deflate
+the very baseline the z-score is measured against, since a run of repeated
+zero-return days shrinks the estimation-window standard deviation, making
+whatever real move eventually shows up look far more "significant" than it
+is — and it would pin that whole move on whichever single day the feed
+happens to update, when the real cause could be news from any point in the
+weeks since the previous revision. A report built that way would look
+exactly as statistically rigorous as the listed-company one while resting
+on data that cannot earn any of it.
+
+**What the data can support:** the real revision points, and the raw
+percentage change between one and the next, attributed honestly to the
+*date range* between them rather than to a single fabricated day —
+`ceia/unlisted.py:real_updates()`/`price_moves()`. News is matched to
+whichever gap it falls inside, using the exact same ingestion pipeline as
+the listed-company tool (`ceia.ingest.run()`, unchanged — alias widening,
+FinBERT, GoEmotions and all, since none of that depends on how the price is
+priced). The report (`ceia/report.py:build_unlisted_html()`) is a distinct
+template, not a bent version of the listed one: no `z`, `CAR`, `t`, `p`, or
+`Robust` column, because none of them are earned. See
+`ceia/unlisted.py`'s and `ceia/unlisted_narrative.py`'s module docstrings
+for the full reasoning; `tests/test_unlisted_narrative.py` and
+`tests/test_unlisted_report.py` scan every generated sentence to confirm
+that vocabulary never leaks in as a claimed value, only ever as an explicit
+disclaimer of its absence.
+
+### A second real finding: large moves can be corporate actions, not news
+
+The same live check turned up gaps of **+182%** and **−65%** in one
+company's real revision history. Those line up with a bonus-share issue
+UnlistedZone's own coverage separately confirms happened in that window — a
+4:1 bonus mechanically resets the per-share price to roughly a fifth of
+what it was, with no change in what the company is actually worth. Unlike
+a listed price feed, UnlistedZone's series does not appear to be adjusted
+for this. The report's Summary states this caveat explicitly rather than
+letting the largest number in the table imply a dramatic market reaction
+that may just be a share count changing.
+
+### The `robots.txt` decision, made explicitly rather than silently
+
+UnlistedZone's `robots.txt` disallows a crawler named `ClaudeBot` by name
+(`Content-Signal: ai-train=no`) while allowing generic bots. This project's
+existing precedent for named-crawler blocks (Financial Express/Business
+Line naming "Anthropic") is that a distinct, honestly-declared user agent
+is evaluated against the general `User-agent: *` group instead — which
+technically permits this. But this is the first source where the named bot
+is literally the one doing the building, not a generality, so it was not
+this project's call to make on its own: raised directly, the answer was to
+proceed on the same precedent already applied elsewhere. Recorded here
+rather than left implicit.
+
 ## Reusing the collected corpus
 
 `data/adani_wide_2023.json` holds the 137-item Adani corpus from the validation
@@ -989,3 +1072,8 @@ Decisions made without asking, and the reasoning:
    2023.** The Hindenburg report is an unambiguous, well-documented negative
    shock, which is what Success Metric #2 needs — a known incident that should
    surface as a top candidate with a negative abnormal return.
+11. **UnlistedZone's named `ClaudeBot` disallow was raised explicitly, not
+   decided silently.** See [Phase 5](#phase-5--unlisted--pre-ipo-shares) — the
+   answer was to proceed on this project's existing named-crawler precedent,
+   but that call was asked for rather than assumed, since this is the first
+   source where the named bot is literally the one doing the building.
