@@ -16,7 +16,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-442 tests
+451 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -123,7 +123,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
 `pip install`, which is why it's not in `.[all]`).
 
 ```bash
-pytest -q     # 442 tests, no network required
+pytest -q     # 451 tests, no network required
 ```
 
 ### Run the spike
@@ -947,6 +947,18 @@ for the full reasoning; `tests/test_unlisted_narrative.py` and
 `tests/test_unlisted_report.py` scan every generated sentence to confirm
 that vocabulary never leaks in as a claimed value, only ever as an explicit
 disclaimer of its absence.
+
+**News coverage, charted and tabulated — but never against an abnormal
+return.** The report also carries a news-volume/tone bar chart
+(`ceia/charts.py:news_coverage_svg()`) and a flat table of every dated item
+collected in the window (`ceia/report.py:_news_table()`), matching the
+listed-company report's coverage panel and per-day table. The distinction
+this section has been drawing throughout still holds: a day's news count and
+sentiment tone need nothing from a benchmark or a market model to be
+honestly described, so that much is shown here exactly as it is for listed
+stocks — what stays absent is any panel or column that would compare that
+coverage against an abnormal return, since there is no valid one to compare
+it against.
 
 ### A second real finding: large moves can be corporate actions, not news
 

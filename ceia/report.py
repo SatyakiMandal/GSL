@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .charts import price_level_svg, timeline_svg
+from .charts import news_coverage_svg, price_level_svg, timeline_svg
 from .eventstudy import Incident
 from .narrative import incident_narrative, summary_narrative
 from .unlisted import real_updates
@@ -459,6 +459,44 @@ def _move_sections(moves: list, company: str) -> str:
     return "".join(blocks)
 
 
+def _news_table(items: list, start: date, end: date) -> str:
+    """Every collected item published inside the window, oldest first — the
+    same underlying data the per-move ``Coverage in this window`` lists
+    already show, but as one flat table so a reader can scan tone and
+    relevance across the whole run without opening each move section."""
+    dated = sorted(
+        (i for i in items if i.published_at is not None
+         and start <= i.published_at.date() <= end),
+        key=lambda i: i.published_at,
+    )
+    if not dated:
+        return '<p class="empty">No dated coverage found in this window.</p>'
+
+    rows = []
+    for i in dated:
+        headline = escape(i.headline or "(no headline)")
+        title = (
+            f'<a href="{escape(i.url)}" target="_blank" rel="noopener noreferrer">{headline}</a>'
+            if i.url.startswith(("http://", "https://")) else headline
+        )
+        tone_cls = ("pos" if i.sentiment_score > 0.15
+                   else "neg" if i.sentiment_score < -0.15 else "")
+        rows.append(
+            f"<tr><td>{i.published_at:%d %b %Y}</td>"
+            f'<td class="txt">{title}</td>'
+            f"<td>{escape(i.source)}</td>"
+            f'<td class="{tone_cls}">{escape(i.sentiment_label or "—")} '
+            f"({i.sentiment_score:+.2f})</td>"
+            f"<td>{i.relevance_score:.2f}</td></tr>"
+        )
+    return (
+        '<div class="scroll"><table><thead><tr>'
+        '<th>Date</th><th class="txt">Headline</th><th>Source</th>'
+        "<th>Tone</th><th>Relevance</th></tr></thead><tbody>"
+        + "".join(rows) + "</tbody></table></div>"
+    )
+
+
 def build_unlisted_html(analysis) -> str:
     """Render a :class:`ceia.unlisted.UnlistedAnalysis` as a standalone HTML
     document.
@@ -532,6 +570,15 @@ price was actually revised; everywhere else is a forward-filled display value,
 not a new observation. Dashed vertical lines and numbered badges mark the
 ranked price moves below.</p>
 {price_level_svg(analysis.series, real_dates, config.company, moves=ranked)}
+
+<h2>News coverage</h2>
+<p>Every collected item's publication day, across the whole window — bar
+height is the day's item count, colour is the mean sentiment tone that day.
+This is purely descriptive: unlike the price panel above, it needs nothing
+from a benchmark or a market model, so it exists here even though this
+report computes no abnormal return (see the Summary above for why).</p>
+{news_coverage_svg(analysis.series, analysis.items, config.company)}
+{_news_table(analysis.items, config.start, config.end)}
 
 <h2>Notable price moves</h2>
 <p>Ranked by the size of the raw change between one price revision and the

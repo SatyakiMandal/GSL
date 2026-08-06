@@ -20,7 +20,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ceia.charts import price_level_svg  # noqa: E402
+from ceia.extract import IST  # noqa: E402
+from ceia.charts import news_coverage_svg, price_level_svg  # noqa: E402
 from ceia.models import NewsItem, RunConfig  # noqa: E402
 from ceia.report import build_unlisted_html  # noqa: E402
 from ceia.unlisted import PriceMove  # noqa: E402
@@ -51,13 +52,23 @@ class FakeUnlistedAnalysis:
     moves: list
     news_meta: dict
     unattributed: list = field(default_factory=list)
+    items: list = field(default_factory=list)
 
     def ranked_moves(self, top_n=None):
         ranked = sorted(self.moves, key=lambda m: -abs(m.change))
         return ranked[:top_n] if top_n else ranked
 
 
-def make_analysis(moves=None, unattributed=None) -> FakeUnlistedAnalysis:
+def _item(day, sentiment=0.0, *, headline="h", url="https://example.com/x") -> NewsItem:
+    from datetime import datetime
+    return NewsItem(source="et", url=url, headline=headline,
+                    published_at=datetime(day.year, day.month, day.day, 10, 0, tzinfo=IST),
+                    sentiment_score=sentiment, relevance_score=0.8,
+                    sentiment_label="positive" if sentiment > 0.15
+                    else "negative" if sentiment < -0.15 else "neutral")
+
+
+def make_analysis(moves=None, unattributed=None, items=None) -> FakeUnlistedAnalysis:
     days = pd.date_range("2026-01-01", periods=15)
     values = [100.0] * 14 + [120.0]
     series = pd.DataFrame({"close": values}, index=days)
@@ -69,6 +80,7 @@ def make_analysis(moves=None, unattributed=None) -> FakeUnlistedAnalysis:
         moves=moves if moves is not None else [_move()],
         news_meta={"stats": {"unique_after_dedupe": 3, "relevant": 3}},
         unattributed=unattributed or [],
+        items=items if items is not None else [_item(date(2026, 1, 5), 0.4)],
     )
 
 
@@ -137,6 +149,29 @@ class TestBuildUnlistedHtml:
                 assert not re.search(pattern, sentence, re.I), \
                     f"causal phrasing in: {sentence!r}"
 
+    def test_news_coverage_chart_and_table_are_present(self):
+        html = build_unlisted_html(make_analysis())
+        assert "news volume (bar height) and tone (colour)" in html
+        assert "<h2>News coverage</h2>" in html
+
+    def test_news_table_lists_collected_items_with_tone(self):
+        item = _item(date(2026, 1, 8), 0.5, headline="Funding round expands")
+        html = build_unlisted_html(make_analysis(items=[item]))
+        assert "Funding round expands" in html
+        assert "positive" in html
+        assert "+0.50" in html
+
+    def test_news_table_omits_items_outside_the_window(self):
+        outside = _item(date(2025, 1, 1), headline="too early")
+        html = build_unlisted_html(make_analysis(items=[outside]))
+        assert "too early" not in html
+        assert "No dated coverage found in this window" in html
+
+    def test_news_table_omits_unattributed_items(self):
+        no_date = NewsItem(source="et", url="u", headline="undated story")
+        html = build_unlisted_html(make_analysis(items=[no_date]))
+        assert "No dated coverage found in this window" in html
+
 
 class TestPriceLevelSvg:
     def test_badges_and_real_points_render(self):
@@ -158,3 +193,29 @@ class TestPriceLevelSvg:
     def test_empty_series_does_not_raise(self):
         empty = pd.DataFrame(columns=["close"])
         assert "No price data" in price_level_svg(empty, set(), "Test Co")
+
+
+class TestNewsCoverageSvg:
+    def test_bars_render_for_days_with_items(self):
+        analysis = make_analysis()
+        items = [_item(date(2026, 1, 5), 0.4), _item(date(2026, 1, 5), 0.6)]
+        svg = news_coverage_svg(analysis.series, items, "Test Co")
+        assert svg.startswith("<svg") and svg.endswith("</svg>")
+        assert "2 item(s), tone" in svg
+
+    def test_negative_tone_gets_hatch_overlay(self):
+        analysis = make_analysis()
+        items = [_item(date(2026, 1, 5), -0.6)]
+        svg = news_coverage_svg(analysis.series, items, "Test Co")
+        assert "tone-neg" in svg
+        assert "neg-hatch-news" in svg
+
+    def test_items_outside_the_series_window_are_ignored(self):
+        analysis = make_analysis()
+        items = [_item(date(2019, 1, 1), 0.5)]
+        svg = news_coverage_svg(analysis.series, items, "Test Co")
+        assert "1 item(s)" not in svg
+
+    def test_empty_series_does_not_raise(self):
+        empty = pd.DataFrame(columns=["close"])
+        assert "No price data" in news_coverage_svg(empty, [], "Test Co")

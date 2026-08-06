@@ -259,6 +259,7 @@ class UnlistedAnalysis:
     moves: list[PriceMove]
     news_meta: dict
     unattributed: list[NewsItem] = field(default_factory=list)
+    items: list[NewsItem] = field(default_factory=list)
 
     def ranked_moves(self, top_n: int | None = None) -> list[PriceMove]:
         ranked = sorted(self.moves, key=lambda m: -abs(m.change))
@@ -329,7 +330,8 @@ def analyse_unlisted(
     unattributed = [i for i in items if i.published_at is None]
 
     return UnlistedAnalysis(config=config, url=url, series=series, moves=moves,
-                            news_meta=news_meta or {}, unattributed=unattributed)
+                            news_meta=news_meta or {}, unattributed=unattributed,
+                            items=items)
 
 
 def main() -> None:

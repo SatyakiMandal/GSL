@@ -265,6 +265,19 @@ class TestUnlistedAnalysisIntegration:
         assert analysis.moves[0].start_date == date(2025, 12, 1)
         assert analysis.moves[0].end_date == date(2026, 1, 10)
 
+    def test_items_are_retained_on_the_analysis(self):
+        """Needed for the report's news-coverage chart/table, which describe
+        the whole window's collected coverage - not just the top few items
+        attached to each individual move."""
+        html = _rsc_page([("2026-01-01", 100), ("2026-01-15", 110)])
+        fetcher = _FakeFetcher(html)
+        config = RunConfig(company="Test Unlisted Co", ticker="",
+                           start=date(2026, 1, 1), end=date(2026, 1, 31))
+        items = [item(date(2026, 1, 8), headline="funding round announced")]
+        analysis = analyse_unlisted(config, "https://unlistedzone.com/shares/x",
+                                    fetcher=fetcher, items=items, news_meta={})
+        assert analysis.items == items
+
     def test_unattributed_items_are_separated_out(self):
         html = _rsc_page([("2026-01-01", 100), ("2026-01-15", 110)])
         fetcher = _FakeFetcher(html)

@@ -419,3 +419,80 @@ def price_level_svg(series: pd.DataFrame, real_dates: set[date],
     )
     parts.append("</svg>")
     return "".join(parts)
+
+
+def news_coverage_svg(series: pd.DataFrame, items: list, company: str) -> str:
+    """A single panel: collected news volume (bar height) and tone (colour),
+    one bar per calendar day, over the same day axis ``price_level_svg``
+    plots for the same window - so the two panels line up and a reader can
+    see what was published against the price line directly above it.
+
+    Deliberately not part of ``price_level_svg`` itself and not gated on any
+    price statistic: unlike an abnormal-return panel, a day's news count and
+    tone need nothing from the price series to be honestly described, so
+    this exists for unlisted reports even though a market-model abnormal
+    return does not (see ``ceia/unlisted.py``'s module docstring).
+    """
+    if series.empty:
+        return '<p class="empty">No price data in the analysis window.</p>'
+
+    dates = [pd.Timestamp(d).date() for d in series.index]
+    n = len(dates)
+    xs = _x_positions(n, WIDTH)
+
+    counts = {d: 0 for d in dates}
+    tone_sum = {d: 0.0 for d in dates}
+    for item in items:
+        if item.published_at is None:
+            continue
+        day = item.published_at.date()
+        if day not in counts:
+            continue
+        counts[day] += 1
+        tone_sum[day] += item.sentiment_score
+
+    cov_h = 130.0
+    cov_y = PAD_TOP
+    total_h = cov_y + cov_h + LABEL_BAND + 14
+    max_count = max(counts.values(), default=0) or 1
+
+    parts = [
+        f'<svg viewBox="0 0 {WIDTH} {total_h:.0f}" class="timeline" '
+        f'preserveAspectRatio="xMidYMid meet" role="img" '
+        f'aria-label="News coverage timeline">'
+        '<defs><pattern id="neg-hatch-news" width="6" height="6" '
+        'patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'
+        '<line x1="0" y1="0" x2="0" y2="6" class="hatch-line"/></pattern></defs>'
+    ]
+    parts.append(_panel_frame(
+        cov_y, cov_h, f"{company} — news volume (bar height) and tone (colour)"))
+    parts.append(_y_axis(cov_y, cov_h, 0, max_count))
+
+    band = (WIDTH - PAD_LEFT - PAD_RIGHT) / n
+    bar_w = max(2.0, min(band * 0.62, 26.0))
+    for x, day in zip(xs, dates):
+        count = counts[day]
+        if count <= 0:
+            continue
+        tone = tone_sum[day] / count
+        height = count / max_count * cov_h
+        css = ("tone-neg" if tone <= -0.15 else
+               "tone-pos" if tone >= 0.15 else "tone-neutral")
+        bar_y = cov_y + cov_h - height
+        parts.append(
+            f'<rect x="{x - bar_w / 2:.1f}" y="{bar_y:.1f}" '
+            f'width="{bar_w:.1f}" height="{height:.1f}" class="{css}">'
+            f'<title>{day:%d %b %Y}: {count} item(s), tone {tone:+.2f}</title></rect>'
+        )
+        if css == "tone-neg":
+            parts.append(
+                f'<rect x="{x - bar_w / 2:.1f}" y="{bar_y:.1f}" width="{bar_w:.1f}" '
+                f'height="{height:.1f}" fill="url(#neg-hatch-news)" pointer-events="none"/>'
+            )
+
+    parts.append(
+        f'<g transform="translate(0,{cov_y + cov_h + 16:.1f})">'
+        f'{_date_labels(dates, xs)}</g>'
+    )
+    parts.append("</svg>")
+    return "".join(parts)
