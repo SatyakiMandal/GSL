@@ -31,6 +31,7 @@ from datetime import date
 from pathlib import Path
 
 from . import align, dedupe, relevance
+from . import wayback as wayback_mod
 from .discovery import Candidate, discover
 from .extract import parse_article
 from .extract import IST
@@ -38,6 +39,7 @@ from .fetcher import DEFAULT_USER_AGENT, Fetcher, RobotsDisallowed
 from .emotion import GoEmotionScorer
 from .models import NewsItem, RunConfig
 from .sentiment import FinBertScorer
+from .sources import ALL_SOURCES, WAYBACK_SOURCES
 from .ticker_lookup import TickerLookupError, resolve_ticker
 
 log = logging.getLogger(__name__)
@@ -45,13 +47,21 @@ log = logging.getLogger(__name__)
 DEFAULT_SOURCES = ["economic_times", "financial_express", "business_line", "moneycontrol",
                    "business_today"]
 
-# Business Standard is deliberately absent: Phase 0 found its Akamai edge
-# returns 403 for every request including robots.txt, so permission to crawl
-# cannot be established. Moneycontrol replaces it.
+# Business Standard is deliberately absent from the normal, live-sitemap
+# discovery path: its Akamai edge returns 403 for every request including
+# robots.txt, so permission to crawl live cannot be established. Moneycontrol
+# replaces it day to day. A best-effort Wayback Machine fallback exists as an
+# explicit opt-in - see WAYBACK_SOURCES / ceia/wayback.py - not silently
+# substituted here, since its coverage is never guaranteed.
 DISABLED_SOURCES = {
     "business_standard": "Akamai edge returns 403 for all requests, including "
-                         "robots.txt; permission to crawl cannot be established.",
+                         "robots.txt; permission to crawl live cannot be "
+                         "established. Opt into the best-effort Wayback "
+                         "Machine fallback instead via --sources business_standard.",
 }
+
+# origin, for building each Wayback source's /topic/<slug> discovery URL.
+_WAYBACK_ORIGINS = {s.key: s.origin for s in ALL_SOURCES if s.key in WAYBACK_SOURCES}
 
 
 @dataclass
@@ -366,15 +376,52 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
         skip_sentiment: bool = False,
         skip_emotion: bool = False,
         skip_alias_widening: bool = False,
-        max_workers: int = 8) -> IngestResult:
+        max_workers: int = 8,
+        wayback_fetcher: Fetcher | None = None) -> IngestResult:
     fetcher = fetcher or Fetcher()
-    sources = [s for s in (config.sources or DEFAULT_SOURCES) if s not in DISABLED_SOURCES]
+    requested = config.sources or DEFAULT_SOURCES
+    # business_standard/livemint are opt-in only (see WAYBACK_SOURCES /
+    # ceia/wayback.py): never picked up by DEFAULT_SOURCES, and routed
+    # through the Wayback fallback below rather than the normal,
+    # STRATEGIES-driven discover() call, which neither source's situation fits.
+    wayback_keys = [s for s in requested if s in WAYBACK_SOURCES]
+    sources = [s for s in requested
+              if s not in DISABLED_SOURCES and s not in WAYBACK_SOURCES]
     result = IngestResult(config=config, disabled_sources=dict(DISABLED_SOURCES))
 
     aliases = config.all_aliases if skip_alias_widening else widen_aliases(config)
     result.aliases_used = aliases
 
     candidates, status = discover(fetcher, sources, config.start, config.end)
+
+    # Best-effort Wayback Machine discovery (and, for business_standard,
+    # fetching too - its live site is fully blocked). See ceia/wayback.py's
+    # module docstring: coverage is never guaranteed, so what was actually
+    # found is reported in source_status exactly like any other source,
+    # never silently absorbed as "no coverage".
+    wayback_parsed_items: list[NewsItem] = []
+    if wayback_keys:
+        wb_fetcher = wayback_fetcher or wayback_mod.wayback_fetcher(
+            cache_dir=str(fetcher.cache_dir))
+        window_mid = config.start + (config.end - config.start) // 2
+        for key in wayback_keys:
+            origin = _WAYBACK_ORIGINS.get(key)
+            if origin is None:
+                status[key] = "unknown wayback source"
+                continue
+            wb_candidates, wb_status = wayback_mod.discover_topic_candidates(
+                wb_fetcher, key, origin, aliases, config.start, config.end)
+            if key == "business_standard":
+                wb_items, wb_errors = wayback_mod.fetch_and_parse_via_wayback(
+                    wb_fetcher, wb_candidates, window_mid)
+                wayback_parsed_items.extend(wb_items)
+                status[key] = f"{wb_status}; {len(wb_items)} article(s) fetched OK"
+                log.info("wayback (%s): %s (errors=%s)", key, status[key], wb_errors)
+            else:
+                candidates.extend(wb_candidates)
+                status[key] = wb_status
+                log.info("wayback (%s): %s", key, status[key])
+
     result.source_status = status
     log.info("discovered %d candidate URLs", len(candidates))
 
@@ -391,6 +438,7 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
 
     parsed_items, errors = fetch_and_parse(fetcher, narrowed, limit=limit,
                                            max_workers=max_workers)
+    parsed_items = parsed_items + wayback_parsed_items
     items = in_range(parsed_items, config.start, config.end)
     log.info("parsed %d articles, %d inside the requested window",
              len(parsed_items), len(items))

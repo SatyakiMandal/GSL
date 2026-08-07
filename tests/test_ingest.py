@@ -23,6 +23,7 @@ from ceia.ingest import (  # noqa: E402
     in_range,
     interleave,
     prefilter,
+    run,
     widen_aliases,
 )
 from ceia.ingest import PREFILTER_SKIP_THRESHOLD  # noqa: E402
@@ -407,3 +408,142 @@ class TestParseArticle:
         parsed = parse_article(html, "u", "economic_times")
         assert parsed["published_at"] is None
         assert parsed["timestamp_confidence"] == "missing"
+
+
+class _FakeMainFetcher:
+    """A minimal stand-in for ceia.fetcher.Fetcher - only what ingest.run()
+    actually touches on the object it's handed: .cache_dir and .get()."""
+
+    def __init__(self, cache_dir: Path, responses: dict[str, object] | None = None):
+        self.cache_dir = cache_dir
+        self.responses = responses or {}
+        self.calls: list[str] = []
+
+    def get(self, url: str):
+        self.calls.append(url)
+        if url not in self.responses:
+            raise RuntimeError(f"unexpected live fetch in a wayback-only test: {url}")
+        return self.responses[url]
+
+
+class _FakeResp:
+    def __init__(self, text: str, status: int = 200):
+        self.text = text
+        self.status = status
+        self.fetched_at = "2023-01-26T00:00:00+00:00"
+        self.sha256 = "deadbeef"
+
+
+def _adani_article_html(headline: str = "Adani Group says allegations baseless") -> str:
+    body = "Adani Group called the Hindenburg report stale and baseless. " * 15
+    return (
+        '<html><head><script type="application/ld+json">'
+        f'{{"@type": "NewsArticle", "headline": "{headline}", '
+        '"datePublished": "2023-01-25T22:05:00+05:30", '
+        f'"articleBody": "{body}"}}'
+        "</script></head><body></body></html>"
+    )
+
+
+def _avail_url(target: str, timestamp: str) -> str:
+    """The exact query string ceia.wayback.closest_snapshot() builds -
+    urlencode() percent-escapes the target URL, so a fake fetcher's keys
+    must match that, not a plain f-string concatenation."""
+    import urllib.parse
+    from ceia.wayback import _AVAILABILITY_URL
+    query = urllib.parse.urlencode({"url": target, "timestamp": timestamp})
+    return f"{_AVAILABILITY_URL}?{query}"
+
+
+def _avail_payload(target: str, playback_url: str | None, timestamp: str = "") -> str:
+    """A real availability-API JSON body, built with json.dumps rather than
+    hand-rolled brace escaping (which silently produced invalid JSON here
+    once already - counting nested f-string braces by eye does not scale)."""
+    import json
+    snapshots = ({"closest": {"status": "200", "available": True,
+                              "url": playback_url, "timestamp": timestamp}}
+                if playback_url else {})
+    return json.dumps({"url": target, "archived_snapshots": snapshots})
+
+
+class TestRunWaybackWiring:
+    """ingest.run()'s opt-in Wayback fallback for business_standard/livemint
+    - see ceia/wayback.py. Fully offline: both the main fetcher and the
+    wayback fetcher are fakes, so nothing here touches a real network."""
+
+    def _config(self, tmp_path: Path, sources: list[str]) -> RunConfig:
+        # No extra aliases: config.all_aliases is just ["Adani Group"], so
+        # discovery only ever tries the one "adani-group" topic slug -
+        # keeps the fake fetcher's response map to a single, unambiguous URL.
+        return RunConfig(
+            company="Adani Group", ticker="ADANIENT.NS",
+            start=date(2023, 1, 20), end=date(2023, 1, 27),
+            sources=sources, min_relevance=0.1,
+        )
+
+    def test_business_standard_items_flow_through_via_wayback_fetch(self, tmp_path):
+        origin = "https://www.business-standard.com"
+        topic_url = f"{origin}/topic/adani-group"
+        article_url = f"{origin}/article/companies/x-123012501585_1.html"
+        topic_playback = f"https://web.archive.org/web/20230125203302/{topic_url}"
+        article_playback = f"https://web.archive.org/web/20230125210000/{article_url}"
+
+        wb_fetcher = _FakeMainFetcher(tmp_path, responses={
+            _avail_url(topic_url, "20230120"): _FakeResp(_avail_payload(topic_url, None)),
+            _avail_url(topic_url, "20230127"): _FakeResp(_avail_payload(
+                topic_url, topic_playback, "20230125203302")),
+            topic_playback: _FakeResp(
+                f'<a href="/web/20230125203302/{article_url}">Story</a>'),
+            # ingest.run() probes the article's own archived snapshot near
+            # the window's midpoint (no per-candidate hint_date is known
+            # from topic-page discovery) - start=Jan 20, end=Jan 27 -> Jan 23.
+            _avail_url(article_url, "20230123"): _FakeResp(_avail_payload(
+                article_url, article_playback, "20230125210000")),
+            article_playback: _FakeResp(_adani_article_html()),
+        })
+
+        main_fetcher = _FakeMainFetcher(tmp_path)  # no live calls expected at all
+        config = self._config(tmp_path, sources=["business_standard"])
+        result = run(config, fetcher=main_fetcher, wayback_fetcher=wb_fetcher,
+                     skip_sentiment=True, skip_emotion=True, skip_alias_widening=True)
+
+        assert main_fetcher.calls == []  # business_standard never fetched live
+        assert [i.url for i in result.items] == [article_url]
+        assert "article(s) fetched OK" in result.source_status["business_standard"]
+
+    def test_livemint_candidates_flow_through_the_normal_live_fetch(self, tmp_path):
+        origin = "https://www.livemint.com"
+        topic_url = f"{origin}/topic/adani-group"
+        article_url = f"{origin}/companies/news/x-11674710954428.html"
+        topic_playback = f"https://web.archive.org/web/20230129042538/{topic_url}"
+
+        wb_fetcher = _FakeMainFetcher(tmp_path, responses={
+            _avail_url(topic_url, "20230120"): _FakeResp(_avail_payload(topic_url, None)),
+            _avail_url(topic_url, "20230127"): _FakeResp(_avail_payload(
+                topic_url, topic_playback, "20230129042538")),
+            topic_playback: _FakeResp(
+                f'<a href="/web/20230129042538/{article_url}">Story</a>'),
+        })
+        # Mint articles are fetched LIVE through the main fetcher - its site
+        # was never blocked, only its own sitemap is too shallow.
+        main_fetcher = _FakeMainFetcher(tmp_path, responses={
+            article_url: _FakeResp(_adani_article_html()),
+        })
+        config = self._config(tmp_path, sources=["livemint"])
+        result = run(config, fetcher=main_fetcher, wayback_fetcher=wb_fetcher,
+                     skip_sentiment=True, skip_emotion=True, skip_alias_widening=True)
+
+        assert article_url in main_fetcher.calls  # fetched live, not via wayback
+        assert [i.url for i in result.items] == [article_url]
+        assert "wayback:" in result.source_status["livemint"]
+
+    def test_wayback_sources_are_opt_in_only(self, tmp_path):
+        """Not requesting business_standard/livemint at all must never touch
+        the wayback fetcher - confirms they are opt-in, not silently added
+        to DEFAULT_SOURCES."""
+        main_fetcher = _FakeMainFetcher(tmp_path, responses={})
+        config = self._config(tmp_path, sources=["economic_times"])
+        wb_fetcher = _FakeMainFetcher(tmp_path)
+        run(config, fetcher=main_fetcher, wayback_fetcher=wb_fetcher,
+            skip_sentiment=True, skip_emotion=True, skip_alias_widening=True)
+        assert wb_fetcher.calls == []

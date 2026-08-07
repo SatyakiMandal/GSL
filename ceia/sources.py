@@ -147,9 +147,55 @@ BUSINESS_STANDARD = Source(
     discovery=[
         "https://www.business-standard.com/sitemap.xml",
     ],
-    sample_article=None,
-    notes=("Akamai edge returns 403 for every request, including /robots.txt. "
-           "Replaced by Moneycontrol; see docs/phase0-findings.md."),
+    sample_article=(
+        "https://www.business-standard.com/article/companies/"
+        "us-based-hindenburg-research-accuses-adani-group-of-share-rigging-"
+        "fraud-123012501585_1.html"
+    ),
+    notes=(
+        "Akamai edge returns 403 for every request, including /robots.txt, "
+        "live - re-verified directly (with both this tool's own user agent "
+        "and a full browser one, both network-level 403s from AkamaiGHost), "
+        "so this remains excluded from the normal, sitemap-driven discovery "
+        "used by every other source (see DEFAULT_SOURCES). Moneycontrol "
+        "still covers this territory day to day. A best-effort Wayback "
+        "Machine fallback exists as an explicit opt-in (see ceia/wayback.py) "
+        "- discovery AND fetching both go through an archived snapshot, "
+        "since the live site cannot be reached at all."
+    ),
+)
+
+LIVEMINT = Source(
+    key="livemint",
+    name="Mint",
+    origin="https://www.livemint.com",
+    search_url="https://www.livemint.com/search?q=adani",
+    discovery=[
+        # Only the last two calendar days - real, but far too shallow for a
+        # past date range. RSS feeds (/rss/companies, /rss/markets, ...) exist
+        # and are genuine, but carry the identical ~2-day rolling window, so
+        # neither helps a historical case study; both checked directly.
+        "https://www.livemint.com/sitemap/today.xml",
+        "https://www.livemint.com/sitemap/yesterday.xml",
+    ],
+    sample_article=(
+        "https://www.livemint.com/companies/news/"
+        "adani-group-exploring-legal-options-against-short-seller-"
+        "hindenburg-11674710954428.html"
+    ),
+    notes=(
+        "robots.txt is fully permissive (User-agent: * / Allow: / with a "
+        "short, unrelated exclusion list) and names no AI agent - the live "
+        "site was never blocked. The gap is depth: no sitemap or RSS feed "
+        "reaches further back than ~2 days. Article pages carry standard "
+        "NewsArticle JSON-LD with a full articleBody, so an article fetched "
+        "by any means (live or archived) extracts cleanly with no source-"
+        "specific parsing needed. A best-effort Wayback Machine fallback "
+        "exists as an explicit opt-in (see ceia/wayback.py): only "
+        "*discovery* uses an archived topic-page snapshot; each article is "
+        "then fetched live from mint's own site, since that path was never "
+        "blocked."
+    ),
 )
 
 # Added for the unlisted/pre-IPO space specifically (ceia.unlisted): the five
@@ -245,7 +291,7 @@ INC42 = Source(
 # Business Standard is retained only so the probe keeps reporting why it is
 # unavailable; ingestion uses ACTIVE_SOURCES.
 ALL_SOURCES = [ECONOMIC_TIMES, FINANCIAL_EXPRESS, BUSINESS_LINE,
-               MONEYCONTROL, BUSINESS_TODAY, BUSINESS_STANDARD,
+               MONEYCONTROL, BUSINESS_TODAY, BUSINESS_STANDARD, LIVEMINT,
                ENTRACKR, VCCIRCLE, INC42]
 ACTIVE_SOURCES = [ECONOMIC_TIMES, FINANCIAL_EXPRESS, BUSINESS_LINE, MONEYCONTROL,
                   BUSINESS_TODAY]
@@ -253,6 +299,11 @@ ACTIVE_SOURCES = [ECONOMIC_TIMES, FINANCIAL_EXPRESS, BUSINESS_LINE, MONEYCONTROL
 # ceia.unlisted's opt-in additions to DEFAULT_SOURCES (ceia/ingest.py), keyed
 # the same way discovery.STRATEGIES and RunConfig.sources already are.
 UNLISTED_EXTRA_SOURCES = ["entrackr", "vccircle", "inc42"]
+
+# Best-effort Wayback Machine fallback sources (ceia/wayback.py) - not part
+# of ACTIVE_SOURCES/DEFAULT_SOURCES, since coverage is never guaranteed (see
+# ceia/wayback.py's module docstring); opt in explicitly via --sources.
+WAYBACK_SOURCES = ["business_standard", "livemint"]
 
 # User-agent tokens that these sites use to refuse AI crawlers. The probe
 # reports which of them each site blocks, because it changes who may run this

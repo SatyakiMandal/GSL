@@ -88,11 +88,12 @@ The short version:
   Line (`/search/*`) for every user agent, so ingestion uses each site's
   robots.txt-declared sitemaps — which are date-partitioned and reach further
   back anyway.
-- **Business Standard — unavailable.** Akamai returns 403 for everything,
+- **Business Standard — unavailable live.** Akamai returns 403 for everything,
   including `robots.txt`. Since permission cannot be established, the code fails
-  closed and skips it. Getting through would require defeating bot detection,
-  which this project does not do; see the findings doc for legitimate
-  alternatives (licensed access, or substituting Mint/Moneycontrol).
+  closed and skips it live. Getting through the live block would require
+  defeating bot detection, which this project does not do; Moneycontrol
+  substitutes for it day to day. A best-effort Wayback Machine fallback was
+  added later on explicit request — see [Phase 8](#phase-8--a-wayback-machine-fallback-for-business-standard-and-mint).
 - **Price data — verified, but not from this build environment.** `yfinance`
   fails inside a TLS-terminating proxy (its `curl_cffi` browser impersonation is
   rejected) and Yahoo rate-limits the sandbox's shared egress IP (`HTTP 429`).
@@ -1325,6 +1326,102 @@ each index's event study is its own `returns.build` call — a lead-in price
 fetch, a market-model fit, and a CAR/permutation test per candidate day — so
 six of them is real extra work, and six more chances to sit through Yahoo's
 retry/backoff on a rate-limited connection.
+
+## Phase 8 — a Wayback Machine fallback for Business Standard and Mint
+
+Business Standard and Mint (the professor's suggested 5-outlet list from
+Phase 1) were both checked back then and found unreachable for a historical
+date range — Business Standard's Akamai edge blocks everything outright,
+Mint's own sitemaps only cover the last ~2 days — and left out. Re-checked
+on an explicit follow-up request, live, before writing any code:
+
+- **Business Standard is still fully blocked** — re-verified directly, with
+  both this tool's own honest user agent and a full browser one, both a
+  network-level 403 from `AkamaiGHost` on every request including
+  `/robots.txt` itself. Not fixable by changing identity; this is the site's
+  edge refusing the connection, not a per-request check.
+- **Mint was never blocked.** `robots.txt` is fully permissive and names no
+  AI agent. Its real RSS feeds (`/rss/companies`, `/rss/markets`, …) are
+  genuine — but carry the identical ~2-day rolling window as its sitemaps,
+  so they help a live/going-forward run and do nothing for a past date
+  range like a case study.
+- **New finding: the Wayback Machine has both sites' topic pages archived**,
+  including a **same-day** snapshot of the Adani/Hindenburg story on both
+  (25 Jan 2023) — verified end to end: a real archived topic page with real,
+  dated article links, and a real archived article carrying a standard
+  `NewsArticle` JSON-LD block (headline, full `articleBody`, `datePublished`)
+  that this project's existing extractor parses with zero source-specific
+  code.
+- **This is best-effort, not a guaranteed backfill.** Two unrelated spot-
+  checks (Paytm, Zomato) to make sure the Adani case wasn't a fluke — being
+  globally-covered news, it gets crawled far more often than most stories —
+  found "closest" archived snapshots anywhere from days to 15+ months
+  off-target, and one with nothing archived at all. archive.org's crawl
+  frequency tracks a page's real-world traffic, which this tool has no
+  control over.
+
+Confirmed with the user before building (a real design fork, not a default
+worth guessing at): build the Wayback fallback for both sites, disclosing
+coverage gaps openly rather than skip it for being unreliable.
+
+### Two different fixes sharing one mechanism
+
+`ceia/wayback.py` fetches an archived snapshot of each site's own
+`/topic/<company-slug>` page near a handful of probe dates spread across the
+requested window (`ceia.wayback.discover_topic_candidates`), and extracts
+the real article links it finds — this is *discovery*, standing in for the
+sitemap neither site can otherwise offer for a past date range. What
+happens next differs by site:
+
+- **Business Standard**: since the live site cannot be reached at all,
+  *each article* is also fetched through its own archived snapshot
+  (`ceia.wayback.fetch_and_parse_via_wayback`) rather than the normal
+  `ceia.ingest.fetch_and_parse`. The stored `NewsItem.url` is always the
+  real `business-standard.com` URL, never the Wayback playback URL — the
+  archive is only this tool's retrieval path, not the article's identity,
+  so a reader following the link lands on the real source like every other
+  source in this project.
+- **Mint**: only *discovery* goes through Wayback. Each article found is
+  then fetched live from mint's own site through the normal pipeline, since
+  that path was never blocked — faster, and gets current formatting rather
+  than Wayback's URL-rewritten copy.
+
+Both are opt-in only (`ceia.sources.WAYBACK_SOURCES`) — never added to
+`DEFAULT_SOURCES`, since coverage is never guaranteed the way the other five
+sources' sitemap-driven discovery is. Add `business_standard` and/or
+`livemint` to `--sources` explicitly to use them:
+
+```bash
+python -m ceia.ingest --company "Adani Enterprises" --ticker ADANIENT.NS \
+  --start 2023-01-20 --end 2023-02-03 --alias "Adani Group" \
+  --sources economic_times financial_express business_line moneycontrol \
+            business_today business_standard livemint
+```
+
+Whatever each run actually finds — a snapshot timestamp and how many
+candidate URLs it yielded, or nothing found near the window — is reported in
+`source_status`, the same place every other source's outcome already is,
+never silently folded into "no coverage that day".
+
+### The robots.txt call, made explicitly rather than silently
+
+archive.org's own `robots.txt` (fetched, checked) is permissive —
+`User-agent: *` disallows only `/control/` and `/report/`, no AI-agent block
+of any kind. The actual playback host used here, `web.archive.org`, has no
+`robots.txt` file at all — a real 404, verified directly. Under the standard
+interpretation (a missing robots.txt imposes no restriction), that is not a
+wall — unlike every *403*-on-robots.txt case this project has hit elsewhere
+(Business Standard itself, RBI's own site — see Phase 6), where permission
+genuinely cannot be established. This project's own `ceia.robots.RobotsPolicy`
+is intentionally more conservative than that (any non-2xx fails closed), a
+sound default for a commercial publisher's edge returning errors as part of
+blocking bots — but applying that same conservatism to a non-profit
+library's *missing* robots.txt file would misread an absent policy as a wall
+it never declared. Fetched through a dedicated `ceia.fetcher.Fetcher` with
+`obey_robots=False` (`ceia.wayback.wayback_fetcher()`), constructed only
+here and never used for any publisher's own origin, so this decision stays
+local and visible rather than loosening the shared default every other
+source is still held to.
 
 ## Reusing the collected corpus
 
