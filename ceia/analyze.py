@@ -113,6 +113,7 @@ def analyse(
     providers=None,
     permutations: int = returns.DEFAULT_PERMUTATIONS,
     macro_provider: PriceProvider | None = None,
+    macro_fetcher=None,
 ) -> Analysis:
     frame, model, price_meta = returns.build(
         config.ticker, config.benchmark, config.start, config.end,
@@ -191,7 +192,8 @@ def analyse(
             })
 
     macro_events = macro_mod.macro_events_in_window(config.start, config.end)
-    macro_summary = macro_mod.macro_summary(config.start, config.end, provider=macro_provider)
+    macro_summary = macro_mod.macro_summary(
+        config.start, config.end, provider=macro_provider, fetcher=macro_fetcher)
 
     return Analysis(
         config=config,
@@ -387,7 +389,8 @@ def main() -> None:
                              "ceia.ingest.widen_aliases()). On by default; "
                              "costs one extra ticker-search request per run.")
     parser.add_argument("--skip-macro-prices", action="store_true",
-                        help="Don't fetch Brent crude for the macro-economic "
+                        help="Don't fetch Brent crude, the G-Sec yield, or "
+                             "the fiscal deficit for the macro-economic "
                              "backdrop section. Repo rate events (no network "
                              "needed) still show either way. Useful if Yahoo "
                              "is rate-limiting this connection - see the "
@@ -459,12 +462,13 @@ def main() -> None:
                     AlphaVantageProvider(api_key=args.api_key), CsvProvider()]
 
     macro_provider = macro_mod.SkippedPriceProvider() if args.skip_macro_prices else None
+    macro_fetcher = macro_mod.SkippedFetcher() if args.skip_macro_prices else None
     try:
         analysis = analyse(
             config, items, news_meta, lead_in_days=args.lead_in_days,
             coverage_threshold=args.coverage_z, return_threshold=args.return_z,
             providers=providers, permutations=args.permutations,
-            macro_provider=macro_provider,
+            macro_provider=macro_provider, macro_fetcher=macro_fetcher,
         )
     except PriceError as exc:
         print(f"\nPrice data unavailable: {exc}")

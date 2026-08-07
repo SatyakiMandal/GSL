@@ -503,6 +503,36 @@ class TestMacroSection:
         assert "GDP growth" in html
         assert "MOSPI is a client-rendered app." in html
 
+    def test_gsec_yield_is_shown_with_its_as_of_date(self):
+        macro = {"repo_rate_changes": [], "crude_oil": {}, "not_available": {},
+                 "gsec_yield": {"value": 6.78, "as_of": "August 7, 2026",
+                               "source": "tradingeconomics.com"}}
+        html = build_html(make_analysis(macro=macro))
+        assert "6.78%" in html
+        assert "August 7, 2026" in html
+        assert "not window-scoped" in html
+
+    def test_gsec_yield_failure_is_disclosed_not_hidden(self):
+        macro = {"repo_rate_changes": [], "crude_oil": {}, "not_available": {},
+                 "gsec_yield": {"note": "10-year G-Sec yield unavailable: boom"}}
+        html = build_html(make_analysis(macro=macro))
+        assert "10-year G-Sec yield unavailable" in html
+
+    def test_fiscal_deficit_is_shown_with_its_fiscal_year(self):
+        macro = {"repo_rate_changes": [], "crude_oil": {}, "not_available": {},
+                 "fiscal_deficit": {"fiscal_year": "2026-27", "lakh_crore": 15.69,
+                                    "pct_gdp": 4.4, "source": "govtbudget.com"}}
+        html = build_html(make_analysis(macro=macro))
+        assert "15.69" in html
+        assert "4.4%" in html
+        assert "2026-27" in html
+
+    def test_fiscal_deficit_failure_is_disclosed_not_hidden(self):
+        macro = {"repo_rate_changes": [], "crude_oil": {}, "not_available": {},
+                 "fiscal_deficit": {"note": "fiscal deficit unavailable: boom"}}
+        html = build_html(make_analysis(macro=macro))
+        assert "fiscal deficit unavailable" in html
+
     def test_macro_label_is_escaped(self):
         macro = {"crude_oil": {}, "not_available": {},
                  "repo_rate_changes": [{"date": "2023-01-25",

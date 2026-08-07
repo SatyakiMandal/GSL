@@ -1,30 +1,27 @@
-"""Macro-economic backdrop: RBI repo rate changes and crude oil (Brent).
+"""Macro-economic backdrop: RBI repo rate changes, crude oil (Brent), the
+10-year G-Sec yield and the fiscal deficit.
 
-Added on request, alongside GDP, CPI inflation, IIP, fiscal deficit and the
-10-year G-Sec yield - checked directly (the same feasibility discipline as
-every other data source in this project) and left out, not silently dropped:
+Added on request, alongside GDP, CPI inflation and IIP - checked directly
+(the same feasibility discipline as every other data source in this
+project). Two of the seven originally requested indicators are still left
+out, not silently dropped:
 
 * **GDP / CPI inflation / IIP** — MOSPI (mospi.gov.in) is a client-rendered
   React single-page app (``<div id="root"></div>`` plus a JS module entry
   point); a plain HTTP fetch returns an empty shell for every path checked,
   including its press-release listing. This tool's fetcher is deliberately
   plain HTTP (no headless browser anywhere in the pipeline), so there is
-  nothing to parse here without a much larger architectural change.
-* **Fiscal deficit** — the Controller General of Accounts (cga.nic.in) does
-  serve real, server-rendered HTML (not a JS shell), but no structured
-  monthly-deficit page was found from its crawlable navigation in the time
-  budgeted for this spike. A genuine "not yet investigated enough to trust,"
-  not a hard technical wall like the two below.
-* **10-year G-Sec yield** ("borrowing rate") — Yahoo Finance's chart API
-  (already used for equities and Brent crude below) simply does not carry
-  Indian government bond yields; checked several plausible ticker symbols
-  and Yahoo's own search endpoint, no match. RBI's own database (DBIE) and
-  FBIL both failed to connect from this sandbox - possibly a real block,
-  possibly this environment's networking, unverified either way.
+  nothing to parse here without a much larger architectural change. (A free,
+  no-API-key CSV route via the St. Louis Fed's FRED service does carry
+  mirrored India CPI/IIP/GDP series, checked and confirmed working - but the
+  specific series found are stale: CPI stops March 2025, industrial
+  production stops January 2023, GDP is annual-only. Left out rather than
+  shown as if current; revisit if fresher FRED series turn up.)
 * RBI's own site (rbi.org.in) returns ``418 Unauthorised Access`` on
   ``robots.txt`` itself for every path tried - the same "permission cannot
   be established" wall Business Standard hit (see ``ceia/sources.py``) -
-  which rules it out as a direct source for repo rate history too.
+  which rules it out as a direct source for repo rate history, G-Sec yields,
+  or anything else.
 
 **What is included**, because it checked out:
 
@@ -40,16 +37,46 @@ every other data source in this project) and left out, not silently dropped:
   ticker, the same infrastructure already used for equities and the
   benchmark index. Subject to the identical Yahoo rate-limit on shared/
   proxied egress already documented in the README for equity tickers.
+* **10-year G-Sec yield** ("borrowing rate") — not carried by Yahoo Finance
+  (checked directly, no match), but `tradingeconomics.com`'s bond-yield page
+  is real, server-rendered HTML (confirmed, not a JS shell) with the current
+  value and its exact as-of date both embedded in a stable, self-describing
+  ``<meta name="description">`` sentence - verified against a real fetch. Its
+  ``robots.txt`` is fully unrestricted, no AI-agent block of any kind. This
+  is always a *current* reading, not a value as of the report's own window -
+  shown with its own fetched-on date so it is never mistaken for one.
+* **Fiscal deficit** — `govtbudget.com`'s fiscal deficit tracker has a
+  similarly stable sentence in its page body naming the budgeted figure and
+  the fiscal year it applies to, verified against a real fetch. Its
+  ``robots.txt`` blanket-blocks ``ClaudeBot`` by name — more directly than
+  either UnlistedZone's or Inc42's policies (see [Phase
+  5](#phase-5--unlisted--pre-ipo-shares)) — but this tool's own,
+  distinct, honestly-declared user agent is not itself named anywhere in the
+  file, so it falls under the unrestricted default group; raised explicitly
+  rather than assumed, and the answer was the same as the two earlier cases.
+  Also always the latest *budgeted* figure for a fiscal year, not a value
+  scoped to the report's window.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date
 
 import pandas as pd
 
+from .fetcher import Fetcher
 from .prices import PriceError, PriceProvider, YahooChartProvider
+
+_GSEC_URL = "https://tradingeconomics.com/india/government-bond-yield"
+_GSEC_RE = re.compile(
+    r'India 10Y Bond Yield \w+ to ([\d.]+)% on ([A-Za-z]+ \d{1,2}, \d{4})')
+
+_FISCAL_DEFICIT_URL = "https://govtbudget.com/budget-analysis/fiscal-deficit"
+_FISCAL_DEFICIT_RE = re.compile(
+    r"India's fiscal deficit for (\d{4}-\d{2}) is budgeted at Rs "
+    r"([\d.]+) lakh crore, which equals ([\d.]+)% of GDP")
 
 # Genuine rate *changes* only - a Monetary Policy Committee meeting that held
 # the rate steady is not an event to mark. Cross-checked against multiple
@@ -92,15 +119,14 @@ REPO_RATE_CHANGES: list[tuple[date, float]] = [
 # other checked-and-rejected source.
 NOT_AVAILABLE_INDICATORS: dict[str, str] = {
     "GDP growth": "MOSPI's site is a client-rendered React app; no data is "
-                  "visible to a plain HTTP fetch.",
+                  "visible to a plain HTTP fetch. A free FRED mirror exists "
+                  "but is annual-only.",
     "CPI inflation": "MOSPI's site is a client-rendered React app; no data "
-                     "is visible to a plain HTTP fetch.",
+                     "is visible to a plain HTTP fetch. A free FRED mirror "
+                     "exists but stops in March 2025.",
     "IIP": "MOSPI's site is a client-rendered React app; no data is visible "
-          "to a plain HTTP fetch.",
-    "Fiscal deficit": "No structured monthly-deficit page found on "
-                      "cga.nic.in's crawlable navigation.",
-    "10-year G-Sec yield": "Not carried by Yahoo Finance; RBI's DBIE and "
-                           "FBIL both failed to connect from this sandbox.",
+          "to a plain HTTP fetch. A free FRED mirror exists but stops in "
+          "January 2023.",
 }
 
 
@@ -155,11 +181,73 @@ def crude_oil_series(
     return frame, ""
 
 
+class SkippedFetcher:
+    """What ``--skip-macro-prices`` passes for the G-Sec yield and fiscal
+    deficit HTML fetches - degrades immediately, no network touched. Also
+    what every test that reaches ``macro_summary()`` should inject, for the
+    same reason ``SkippedPriceProvider`` exists: the real default
+    (:class:`ceia.fetcher.Fetcher`) retries a failure with backoff, which is
+    slow and was once a real, caught-late regression in this project's own
+    test suite (see the git history for ceia/macro.py's addition)."""
+
+    def get(self, url: str):
+        raise RuntimeError("skipped (--skip-macro-prices)")
+
+
+def gsec_yield(fetcher: Fetcher | None = None) -> tuple[dict | None, str]:
+    """India's 10-year G-Sec yield, as tradingeconomics.com currently states
+    it - a *current* reading, not a value as of the report's own window (see
+    the module docstring for why no historical series is available here).
+
+    Returns ``(value, note)`` the same shape as :func:`crude_oil_series` -
+    ``value`` is ``None`` on failure rather than raising.
+    """
+    fetcher = fetcher or Fetcher()
+    try:
+        response = fetcher.get(_GSEC_URL)
+    except Exception as exc:
+        return None, f"10-year G-Sec yield unavailable: {exc}"
+    match = _GSEC_RE.search(response.text)
+    if not match:
+        return None, "10-year G-Sec yield unavailable: page format changed"
+    value, as_of = match.groups()
+    return {"value": float(value), "as_of": as_of,
+            "source": "tradingeconomics.com"}, ""
+
+
+def fiscal_deficit(fetcher: Fetcher | None = None) -> tuple[dict | None, str]:
+    """India's budgeted fiscal deficit, as govtbudget.com currently states
+    it for the fiscal year it names - a *current* budgeted figure, not a
+    value scoped to the report's own window.
+
+    Returns ``(value, note)`` the same shape as :func:`crude_oil_series`.
+    """
+    fetcher = fetcher or Fetcher()
+    try:
+        response = fetcher.get(_FISCAL_DEFICIT_URL)
+    except Exception as exc:
+        return None, f"fiscal deficit unavailable: {exc}"
+    match = _FISCAL_DEFICIT_RE.search(response.text)
+    if not match:
+        return None, "fiscal deficit unavailable: page format changed"
+    fiscal_year, lakh_crore, pct_gdp = match.groups()
+    return {"fiscal_year": fiscal_year, "lakh_crore": float(lakh_crore),
+            "pct_gdp": float(pct_gdp), "source": "govtbudget.com"}, ""
+
+
 def macro_summary(
-    start: date, end: date, provider: PriceProvider | None = None,
+    start: date, end: date,
+    provider: PriceProvider | None = None,
+    fetcher: Fetcher | None = None,
 ) -> dict:
     """Everything a report needs: events in-window, crude oil's start/end
-    change, and the disclosed list of indicators not yet available."""
+    change, the latest G-Sec yield and fiscal deficit reading, and the
+    disclosed list of indicators still not available.
+
+    ``fetcher`` drives the G-Sec yield and fiscal deficit fetches; pass
+    :class:`SkippedFetcher` (as ``--skip-macro-prices`` does) to skip both
+    without touching the network, same role ``provider`` plays for crude oil.
+    """
     events = macro_events_in_window(start, end)
     frame, note = crude_oil_series(start, end, provider=provider)
     crude = {}
@@ -174,10 +262,16 @@ def macro_summary(
         }
     else:
         crude = {"note": note}
+
+    gsec_value, gsec_note = gsec_yield(fetcher=fetcher)
+    deficit_value, deficit_note = fiscal_deficit(fetcher=fetcher)
+
     return {
         "repo_rate_changes": [
             {"date": e.day.isoformat(), "label": e.label} for e in events
         ],
         "crude_oil": crude,
+        "gsec_yield": gsec_value or {"note": gsec_note},
+        "fiscal_deficit": deficit_value or {"note": deficit_note},
         "not_available": dict(NOT_AVAILABLE_INDICATORS),
     }

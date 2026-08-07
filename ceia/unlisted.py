@@ -309,6 +309,7 @@ def analyse_unlisted(
     skip_emotion: bool = False,
     max_workers: int = 8,
     macro_provider=None,
+    macro_fetcher=None,
 ) -> UnlistedAnalysis:
     """Wire the price-move computation to the existing news pipeline.
 
@@ -344,7 +345,8 @@ def analyse_unlisted(
     unattributed = [i for i in items if i.published_at is None]
 
     macro_events = macro_mod.macro_events_in_window(config.start, config.end)
-    macro_summary = macro_mod.macro_summary(config.start, config.end, provider=macro_provider)
+    macro_summary = macro_mod.macro_summary(
+        config.start, config.end, provider=macro_provider, fetcher=macro_fetcher)
 
     return UnlistedAnalysis(config=config, url=url, series=series, moves=moves,
                             news_meta=news_meta or {}, unattributed=unattributed,
@@ -379,7 +381,8 @@ def main() -> None:
                              "and inc42, which cover the unlisted/pre-IPO "
                              "space the mainstream press mostly does not.")
     parser.add_argument("--skip-macro-prices", action="store_true",
-                        help="Don't fetch Brent crude for the macro-economic "
+                        help="Don't fetch Brent crude, the G-Sec yield, or "
+                             "the fiscal deficit for the macro-economic "
                              "backdrop section. Repo rate events (no network "
                              "needed) still show either way. Useful if Yahoo "
                              "is rate-limiting this connection - see the "
@@ -416,11 +419,13 @@ def main() -> None:
         print(f"Resolved UnlistedZone URL: {args.company!r} -> {url}")
 
     macro_provider = macro_mod.SkippedPriceProvider() if args.skip_macro_prices else None
+    macro_fetcher = macro_mod.SkippedFetcher() if args.skip_macro_prices else None
     try:
         analysis = analyse_unlisted(
             config, url, fetcher=fetcher, limit=args.limit,
             skip_sentiment=args.skip_sentiment, skip_emotion=args.skip_emotion,
             max_workers=args.workers, macro_provider=macro_provider,
+            macro_fetcher=macro_fetcher,
         )
     except UnlistedPriceError as exc:
         print(f"\nPrice data unavailable: {exc}")

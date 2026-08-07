@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ceia.extract import IST  # noqa: E402
 from ceia.models import NewsItem, RunConfig  # noqa: E402
 from ceia.ingest import DEFAULT_SOURCES  # noqa: E402
+from ceia.macro import SkippedFetcher  # noqa: E402
 from ceia.prices import PriceError  # noqa: E402
 from ceia.unlisted import (  # noqa: E402
     UNLISTED_DEFAULT_SOURCES,
@@ -50,6 +51,7 @@ class _NoMacroProvider:
 
 
 _NO_MACRO = _NoMacroProvider()
+_NO_MACRO_FETCHER = SkippedFetcher()
 
 
 def item(day: date, sentiment: float = 0.0, *, url="u", source="et",
@@ -236,7 +238,7 @@ class TestUnlistedAnalysisIntegration:
                            start=date(2026, 1, 1), end=date(2026, 1, 31))
         items = [item(date(2026, 1, 8), headline="funding round announced")]
         analysis = analyse_unlisted(config, "https://unlistedzone.com/shares/x",
-                                    fetcher=fetcher, items=items, news_meta={}, macro_provider=_NO_MACRO)
+                                    fetcher=fetcher, items=items, news_meta={}, macro_provider=_NO_MACRO, macro_fetcher=_NO_MACRO_FETCHER)
         assert len(analysis.moves) == 1
         assert analysis.moves[0].change == pytest.approx((812.5 - 740) / 740)
         assert [h["headline"] for h in analysis.moves[0].headlines] == \
@@ -257,7 +259,7 @@ class TestUnlistedAnalysisIntegration:
         config = RunConfig(company="Test Unlisted Co", ticker="",
                            start=date(2026, 1, 1), end=date(2026, 1, 31))
         analysis = analyse_unlisted(config, "https://unlistedzone.com/shares/x",
-                                    fetcher=fetcher, items=[], news_meta={}, macro_provider=_NO_MACRO)
+                                    fetcher=fetcher, items=[], news_meta={}, macro_provider=_NO_MACRO, macro_fetcher=_NO_MACRO_FETCHER)
         for move in analysis.moves:
             assert move.end_date >= config.start
             assert move.start_date <= config.end
@@ -276,7 +278,7 @@ class TestUnlistedAnalysisIntegration:
         config = RunConfig(company="Test Unlisted Co", ticker="",
                            start=date(2026, 1, 1), end=date(2026, 1, 31))
         analysis = analyse_unlisted(config, "https://unlistedzone.com/shares/x",
-                                    fetcher=fetcher, items=[], news_meta={}, macro_provider=_NO_MACRO)
+                                    fetcher=fetcher, items=[], news_meta={}, macro_provider=_NO_MACRO, macro_fetcher=_NO_MACRO_FETCHER)
         assert len(analysis.moves) == 1
         assert analysis.moves[0].start_date == date(2025, 12, 1)
         assert analysis.moves[0].end_date == date(2026, 1, 10)
@@ -291,7 +293,7 @@ class TestUnlistedAnalysisIntegration:
                            start=date(2026, 1, 1), end=date(2026, 1, 31))
         items = [item(date(2026, 1, 8), headline="funding round announced")]
         analysis = analyse_unlisted(config, "https://unlistedzone.com/shares/x",
-                                    fetcher=fetcher, items=items, news_meta={}, macro_provider=_NO_MACRO)
+                                    fetcher=fetcher, items=items, news_meta={}, macro_provider=_NO_MACRO, macro_fetcher=_NO_MACRO_FETCHER)
         assert analysis.items == items
 
     def test_unattributed_items_are_separated_out(self):
@@ -302,7 +304,7 @@ class TestUnlistedAnalysisIntegration:
         no_timestamp = NewsItem(source="et", url="u", headline="no timestamp",
                                 published_at=None)
         analysis = analyse_unlisted(config, "https://unlistedzone.com/shares/x",
-                                    fetcher=fetcher, items=[no_timestamp], news_meta={}, macro_provider=_NO_MACRO)
+                                    fetcher=fetcher, items=[no_timestamp], news_meta={}, macro_provider=_NO_MACRO, macro_fetcher=_NO_MACRO_FETCHER)
         assert analysis.unattributed == [no_timestamp]
 
     def test_ranked_moves_sorts_by_absolute_change(self):
@@ -312,7 +314,7 @@ class TestUnlistedAnalysisIntegration:
         config = RunConfig(company="Test Unlisted Co", ticker="",
                            start=date(2026, 1, 1), end=date(2026, 1, 31))
         analysis = analyse_unlisted(config, "https://unlistedzone.com/shares/x",
-                                    fetcher=fetcher, items=[], news_meta={}, macro_provider=_NO_MACRO)
+                                    fetcher=fetcher, items=[], news_meta={}, macro_provider=_NO_MACRO, macro_fetcher=_NO_MACRO_FETCHER)
         ranked = analysis.ranked_moves()
         assert ranked[0].change == pytest.approx((80 - 105) / 105)  # the -23.8% move
         assert analysis.ranked_moves(top_n=1) == ranked[:1]

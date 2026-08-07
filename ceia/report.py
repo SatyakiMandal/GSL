@@ -145,16 +145,18 @@ def _stat(key: str, value: str) -> str:
 
 
 def _macro_section(macro: dict) -> str:
-    """RBI repo rate changes and Brent crude across the window, plus the
-    disclosed list of indicators checked and not yet available (GDP, CPI
-    inflation, IIP, fiscal deficit, the 10-year G-Sec yield) - see
-    ``ceia/macro.py``'s module docstring for why each one specifically.
+    """RBI repo rate changes and Brent crude across the window, the latest
+    G-Sec yield and fiscal deficit reading, plus the disclosed list of
+    indicators checked and still not available (GDP, CPI inflation, IIP) -
+    see ``ceia/macro.py``'s module docstring for why each one specifically.
     Context alongside the analysis above, never framed as having driven it.
     """
     if not macro:
         return ""
     events = macro.get("repo_rate_changes") or []
     crude = macro.get("crude_oil") or {}
+    gsec = macro.get("gsec_yield") or {}
+    deficit = macro.get("fiscal_deficit") or {}
     not_available = macro.get("not_available") or {}
 
     if events:
@@ -180,6 +182,23 @@ def _macro_section(macro: dict) -> str:
     else:
         crude_stat = _stat("Brent crude", escape(crude.get("note") or "unavailable"))
 
+    if gsec.get("value") is not None:
+        gsec_stat = _stat(
+            "10Y G-Sec yield (latest, not window-scoped)",
+            f'{gsec["value"]:.2f}% as of {escape(gsec["as_of"])}',
+        )
+    else:
+        gsec_stat = _stat("10Y G-Sec yield", escape(gsec.get("note") or "unavailable"))
+
+    if deficit.get("lakh_crore") is not None:
+        deficit_stat = _stat(
+            "Fiscal deficit (latest budgeted figure, not window-scoped)",
+            f'₹{deficit["lakh_crore"]:.2f} lakh crore ({deficit["pct_gdp"]:.1f}% '
+            f'of GDP), FY {escape(deficit["fiscal_year"])}',
+        )
+    else:
+        deficit_stat = _stat("Fiscal deficit", escape(deficit.get("note") or "unavailable"))
+
     gaps_block = ""
     if not_available:
         items = "".join(
@@ -195,8 +214,11 @@ def _macro_section(macro: dict) -> str:
 <h2>Macro-economic backdrop</h2>
 <p>RBI repo rate changes in this window (also marked on the timeline above as
 small diamonds), and Brent crude's move across it — context alongside the
-price action above, not a claim that either one drove it.</p>
-<div class="grid">{crude_stat}</div>
+price action above, not a claim that either one drove it. The G-Sec yield
+and fiscal deficit stats below are the latest available reading in either
+case, not a value as of this report's own window — each is labelled with the
+date or fiscal year it actually applies to.</p>
+<div class="grid">{crude_stat}{gsec_stat}{deficit_stat}</div>
 {events_block}
 {gaps_block}
 """

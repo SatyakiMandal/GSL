@@ -250,6 +250,18 @@ class TestMacroSection:
         assert "-5.00%" in html
         assert "GDP growth" in html
 
+    def test_gsec_yield_and_fiscal_deficit_render(self):
+        macro = {
+            "repo_rate_changes": [], "crude_oil": {}, "not_available": {},
+            "gsec_yield": {"value": 6.78, "as_of": "August 7, 2026",
+                          "source": "tradingeconomics.com"},
+            "fiscal_deficit": {"fiscal_year": "2026-27", "lakh_crore": 15.69,
+                              "pct_gdp": 4.4, "source": "govtbudget.com"},
+        }
+        html = build_unlisted_html(make_analysis(macro=macro))
+        assert "6.78%" in html
+        assert "15.69" in html
+
     def test_empty_series_does_not_raise(self):
         empty = pd.DataFrame(columns=["close"])
         assert "No price data" in news_coverage_svg(empty, [], "Test Co")

@@ -16,7 +16,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-492 tests
+507 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -123,7 +123,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
 `pip install`, which is why it's not in `.[all]`).
 
 ```bash
-pytest -q     # 492 tests, no network required
+pytest -q     # 507 tests, no network required
 ```
 
 ### Run the spike
@@ -1079,11 +1079,14 @@ rather than left implicit.
 ## Phase 6 — Macro-economic backdrop
 
 Added on request (a professor's ask, relayed through the student using this
-tool): RBI repo rate changes, and — after checking — Brent crude, alongside
-whichever candidate incident days or price moves a run already finds. GDP
-growth, CPI inflation, IIP, fiscal deficit, and the 10-year G-Sec yield were
-also asked for and checked; four of the five are disclosed as not included
-rather than built on an unverified guess.
+tool): RBI repo rate changes, Brent crude, the 10-year G-Sec yield, and the
+fiscal deficit, alongside whichever candidate incident days or price moves a
+run already finds. GDP growth, CPI inflation and IIP were also asked for and
+checked; all three are disclosed as not included rather than built on an
+unverified guess. When the first version of this shipped, only repo rate and
+crude oil had checked out — the student asked "can't we get the [rest] in
+any way?" rather than accepting the gap, which is what turned up the G-Sec
+yield and fiscal deficit sources below on a second, deeper pass.
 
 ```bash
 python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
@@ -1126,22 +1129,42 @@ indicators:
   deliberately plain HTTP everywhere (no headless browser anywhere in the
   pipeline — see [Phase 0](#phase-0--feasibility-spike)'s reasoning for the
   news sources), so there is nothing here to parse without a materially
-  larger architectural change.
-- **Fiscal deficit** — checked and left out for a softer reason: the
-  Controller General of Accounts (`cga.nic.in`) does serve real,
-  server-rendered HTML (confirmed not a JS shell, unlike MOSPI), but no
-  structured monthly-deficit page turned up from its crawlable navigation in
-  the time budgeted for this spike. A genuine "not yet investigated enough
-  to trust," disclosed as such rather than guessed at.
+  larger architectural change. A second lever exists and was checked: the
+  St. Louis Fed's FRED service mirrors India CPI/IIP/GDP data via a plain
+  CSV download that needs no API key at all — confirmed genuinely working —
+  but the specific series found are stale (CPI stops March 2025, industrial
+  production stops January 2023, GDP is annual-only), and showing a
+  3.5-year-old figure as if current would be worse than disclosing the gap.
+  Left out rather than presented misleadingly; revisit if fresher FRED
+  series turn up.
 - **10-year G-Sec yield** ("borrowing rate") — Yahoo Finance's chart API
-  simply does not carry Indian government bond yields; checked several
-  plausible ticker symbols and Yahoo's own search endpoint directly, no
-  match either way. RBI's own database (DBIE) and FBIL both failed to
-  connect from this sandbox at all — possibly a real block, possibly this
-  environment's networking, unverified either way (the same "check on an
-  unproxied connection" caveat already noted for Yahoo above).
+  does not carry Indian government bond yields (checked several plausible
+  ticker symbols and Yahoo's own search endpoint directly, no match), and
+  RBI's own database (DBIE) and FBIL both failed to connect from this
+  sandbox entirely. But `tradingeconomics.com`'s bond-yield page is real,
+  server-rendered HTML — confirmed directly, not a JS shell — with the
+  current value *and* its exact as-of date both embedded in a stable,
+  self-describing `<meta name="description">` sentence
+  (`ceia/macro.py:gsec_yield()`). Its `robots.txt` is fully unrestricted,
+  not even an AI-agent mention. Always a *current* reading, never a value as
+  of the report's own window, since no historical series was found —
+  disclosed with its own fetched-on date in the report so it is never
+  mistaken for one.
+- **Fiscal deficit** — `govtbudget.com`'s fiscal deficit tracker has a
+  similarly stable sentence naming the latest budgeted figure and the fiscal
+  year it applies to (`ceia/macro.py:fiscal_deficit()`), verified against a
+  real fetch. Its `robots.txt` blanket-blocks `ClaudeBot` by name — more
+  directly than either UnlistedZone's or Inc42's policies, a flat
+  `Disallow: /` with no "live fetcher" exception — but this tool's own,
+  distinct, honestly-declared user agent is not itself named anywhere in the
+  file, so it falls under the unrestricted default group, which explicitly
+  licenses "reference" use in its own content-signal annotation. Raised
+  explicitly rather than assumed to fall under the earlier two cases
+  automatically, given how direct this block is; the answer was the same.
+  Also always the latest *budgeted* figure for a fiscal year, not a value
+  scoped to the report's window.
 
-All five not-included indicators are still surfaced in every report's Macro
+The three still-unavailable indicators are surfaced in every report's Macro
 backdrop section — named, with the specific reason each was checked and
 rejected — rather than silently absent. `ceia/macro.py:NOT_AVAILABLE_INDICATORS`
 is the single source of truth both the report and this README draw from.
@@ -1159,13 +1182,17 @@ the two vocabularies would send a reader searching the ranked list below for
 a "candidate" that was never one. Brent crude, a continuous daily series, is
 instead shown as a single start-to-end % change stat alongside the table,
 the same descriptive register as the unlisted report's news-coverage chart —
-context alongside the price action, never framed as having driven it.
+context alongside the price action, never framed as having driven it. The
+G-Sec yield and fiscal deficit stats sit in that same grid, each labelled
+"latest, not window-scoped" plus its actual as-of date or fiscal year, so
+neither is ever mistaken for a value tied to the report's own date range.
 
-`--skip-macro-prices` (both `ceia.analyze` and `ceia.unlisted`) skips the
-Brent crude network call entirely — repo rate events still show either way,
-since they cost nothing to compute. Useful given the Yahoo rate-limit above:
-a live run can otherwise spend up to ~126 seconds retrying a single 429
-before giving up and disclosing "unavailable" regardless.
+`--skip-macro-prices` (both `ceia.analyze` and `ceia.unlisted`) skips all
+three live macro network calls (Brent crude, G-Sec yield, fiscal deficit)
+entirely — repo rate events still show either way, since they cost nothing
+to compute. Useful given the Yahoo rate-limit above: a live run can
+otherwise spend up to ~126 seconds retrying a single 429 before giving up
+and disclosing "unavailable" regardless.
 
 ## Reusing the collected corpus
 
@@ -1301,3 +1328,9 @@ Decisions made without asking, and the reasoning:
    against multiple independent sources as of this project's own knowledge
    cutoff, and will silently miss any rate change announced after that
    unless someone updates the table by hand.
+14. **govtbudget.com's named `ClaudeBot` block was raised explicitly, not
+   assumed to fall under the earlier two cases automatically.** See
+   [Phase 6](#phase-6--macro-economic-backdrop) — its policy is a flatter,
+   more direct blanket block than either UnlistedZone's or Inc42's, so it
+   was checked with again rather than silently waved through; the answer
+   was the same as before.
