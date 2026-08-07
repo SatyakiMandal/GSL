@@ -66,7 +66,11 @@ class Analysis:
         nifty = {}
         for name, index in self.nifty_indices.items():
             entry = {"ticker": index.ticker, "provider": index.provider,
-                     "window_return": index.window_return, "note": index.note}
+                     "window_return": index.window_return, "note": index.note,
+                     "model": index.model_kind, "model_note": index.model_note,
+                     "beta": index.beta, "r_squared": index.r_squared,
+                     "event_study_note": index.event_study_note,
+                     "incident_stats": index.incident_stats}
             if index.available:
                 idx_table = index.daily.reset_index()
                 idx_table["date"] = idx_table["date"].astype(str)
@@ -209,8 +213,13 @@ def analyse(
         config.start, config.end, provider=macro_provider, fetcher=macro_fetcher)
 
     nifty_indices = ({} if skip_nifty_indices else
-                     nifty_mod.load_nifty_indices(config.start, config.end,
-                                                  providers=providers))
+                     nifty_mod.load_nifty_indices(
+                         config.start, config.end, config.benchmark,
+                         candidate_days=[i.day for i in incidents],
+                         event_window=config.event_window,
+                         providers=providers, lead_in_days=lead_in_days,
+                         permutations=permutations,
+                     ))
 
     return Analysis(
         config=config,
@@ -361,6 +370,17 @@ def _print(analysis: Analysis) -> None:
                 print(f"   permutation p-value: not computed - {car['p_value_note']}")
             if car.get("note"):
                 print(f"   note: {car['note']}")
+        day_key = incident.day.isoformat()
+        for name, index in analysis.nifty_indices.items():
+            stats = index.incident_stats.get(day_key)
+            if not stats:
+                continue
+            print(f"   {name}: abnormal return {stats['abnormal_return'] * 100:+.2f}% "
+                  f"(z={stats['abnormal_return_z']:+.2f}), "
+                  f"CAR[{config.event_window[0]},+{config.event_window[1]}] "
+                  f"{stats['car'] * 100:+.2f}%"
+                  + (f", p={stats['p_value']:.3f}"
+                     if stats.get("p_value") is not None else ""))
         robust = analysis.robustness.get("days", {}).get(incident.day.isoformat())
         if robust:
             print(f"   robustness: flagged in {robust['flagged_in']}/{robust['of']} "
@@ -429,9 +449,10 @@ def main() -> None:
                              "README's note on shared/proxied egress.")
     parser.add_argument("--skip-nifty-indices", action="store_true",
                         help="Don't fetch Nifty 50/Bank/Auto/Energy/IT/Metal "
-                             "as reference lines/stats. Six extra price "
-                             "fetches otherwise - useful if Yahoo is "
-                             "rate-limiting this connection.")
+                             "or run their per-index event studies. Six more "
+                             "lead-in price fetches and market-model fits "
+                             "otherwise - useful if Yahoo is rate-limiting "
+                             "this connection.")
     parser.add_argument("--price-csv", default=None,
                         help="Directory of <SYMBOL>.csv files; forces the CSV provider.")
     parser.add_argument("--api-key", default=None,

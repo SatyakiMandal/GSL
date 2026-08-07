@@ -1240,30 +1240,63 @@ and disclosing "unavailable" regardless.
 
 The professor's other request from the same round: show Nifty 50 and five
 sector indices (Bank, Auto, Energy, IT, Metal) alongside a company's own
-price analysis, "analysed the same way" as the stock. Read literally that
-would mean six more market-model event studies per run — six more
-estimation windows, six more sets of candidate incident days, six more CAR
-tables. That is not what got built. Confirmed scope instead: the indices
-appear as **extra reference lines/stats**, reusing the news/sentiment/
-candidate-day work already done rather than re-running it — the same
-descriptive, backdrop role the macro-economic section above already plays,
-not a second flagging pipeline.
+price analysis, "analysed the same way" as the stock. This shipped in two
+passes, confirmed with the user rather than guessed at either time.
+
+**Pass 1 — descriptive backdrop.** Each index's own rebased price path and
+window return, plus a quick raw-return "moved the same direction as the
+company" coincidence count on already-flagged candidate days
+(`ceia.nifty.same_direction_rate`) — reusing the news/sentiment/candidate-day
+work already done, the same descriptive role the macro-economic section
+above already plays, not a second flagging pipeline.
+
+**Pass 2 — a real per-index event study.** The user asked explicitly for
+each index to get its own event study, "to see if the news/event has an
+all-encompassing effect across all direct and indirect sectors." Read
+literally, "own event study" could mean an independent search for each
+index's own unrelated events (six more candidate-day lists to display,
+mostly about things that have nothing to do with this company). Confirmed
+scope instead: each index gets a *real* market-model event study — its own
+alpha/beta fitted against the same benchmark the company itself uses, its
+own abnormal returns, its own CAR and significance (permutation **and**
+Student's-t p-values) — but **anchored to the candidate incident days
+already flagged for the company**, not an independent search. That directly
+answers the question asked: did this index also move unusually on the day
+the news broke, i.e. did the event ripple past this one stock. It reuses the
+exact machinery `ceia.eventstudy.rank_incidents` already uses for the
+company (`returns.build`, `cumulative_abnormal_return`,
+`permutation_test_car`) rather than inventing a parallel test, and it never
+changes which days are flagged for the company — same non-causal discipline
+as the rest of this project.
+
+One index is a deliberate exception: whichever ticker equals the company's
+own benchmark (typically Nifty 50) gets descriptive stats only. Regressing a
+series on itself gives ~zero residual variance, and a z-score dividing by
+~0 is not a number worth reporting — this is disclosed via
+`IndexSeries.event_study_note` rather than silently producing a nonsense
+figure.
 
 `ceia/nifty.py` fetches each index (`^NSEI`, `^NSEBANK`, `^CNXAUTO`,
 `^CNXENERGY`, `^CNXIT`, `^CNXMETAL` — NSE's standard Yahoo Finance symbols;
 live history could not be verified from this build environment for the same
 Yahoo-rate-limit reason as everywhere else in this README) through the exact
 same provider chain as the company/benchmark price fetch
-(`ceia.prices.load_prices`), rather than a special-cased path — one index
-failing to load degrades to a note on that index alone, the same
-never-sink-the-run behaviour the secondary-benchmark feature already has.
-For each available index this computes: a price path rebased to 100 at the
-window start (`level`), the window's total return, and — for the days
-already flagged as candidate incidents — how often the index moved the same
-direction (sign of daily return) as the company that day
-(`ceia.nifty.same_direction_rate`). That last figure is a coincidence count,
-not a test: it never changes which days get flagged, same as everything
-else in this section.
+(`ceia.returns.build` / `ceia.prices.load_prices`), rather than a
+special-cased path — one index failing to load degrades to a note on that
+index alone, the same never-sink-the-run behaviour the secondary-benchmark
+feature already has.
+
+### Presenting it without burying the company's own findings
+
+Also confirmed rather than guessed: the "Candidate incident days" section —
+the company's own primary finding — stays exactly as it was, unchanged and
+first. Each per-index event-study result is nested as a small extra table
+*under the specific incident it explains* ("How the Nifty indices moved on
+this same day"), not pulled out into a separate, competing section a reader
+would have to cross-reference by date. The standalone "Nifty sector indices"
+section stays purely descriptive — it is the pass-1 summary (window return,
+trend, coincidence count), a quick per-index overview above the fold; the
+statistical detail lives with the finding it belongs to.
 
 ### Why a table of sparklines, not six more lines on the timeline
 
@@ -1279,15 +1312,18 @@ series compare to each other on one axis." That is exactly the small-multiples
 case: `ceia/charts.py:index_sparkline_svg()` draws one small, axis-free trend
 line per index (colour-coded green/up or red/down by its own net direction,
 reusing the `.spark`/`.spark-pos`/`.spark-neg` CSS classes that were already
-defined but unused), and the new "Nifty sector indices" report section lays
-these out as one row per index in a table — ticker, window return, trend,
-and the same-direction count — rather than one crowded chart. Wired into
-`build_html` only; the unlisted report keeps its own deliberately narrower
-vocabulary (see Phase 5) and does not gain this section.
+defined but unused), and the descriptive "Nifty sector indices" report
+section lays these out as one row per index in a table — ticker, window
+return, trend, and the same-direction count — rather than one crowded chart.
+Wired into `build_html` only; the unlisted report keeps its own deliberately
+narrower vocabulary (see Phase 5) and does not gain this section.
 
-`--skip-nifty-indices` (`ceia.analyze` only) skips all six fetches, the same
-opt-out `--skip-macro-prices` provides for the macro section, for the same
-reason: six extra price fetches is six more chances to sit through Yahoo's
+`--skip-nifty-indices` (`ceia.analyze` only) skips the six event studies
+entirely (and the descriptive fetches with them), the same opt-out
+`--skip-macro-prices` provides for the macro section, for the same reason:
+each index's event study is its own `returns.build` call — a lead-in price
+fetch, a market-model fit, and a CAR/permutation test per candidate day — so
+six of them is real extra work, and six more chances to sit through Yahoo's
 retry/backoff on a rate-limited connection.
 
 ## Reusing the collected corpus

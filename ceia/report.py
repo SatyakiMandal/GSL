@@ -257,11 +257,14 @@ def _nifty_section(nifty_indices: dict, incidents: list, daily: pd.DataFrame,
     return f"""
 <h2>Nifty sector indices</h2>
 <p>Nifty 50 and five sector indices, rebased and read the same window as
-{escape(ticker)}'s own price action above — context, not a second
-significance test: none of this changes which days are flagged as candidate
-incidents. <em>Moved with</em> counts, of the candidate incident days already
-flagged above, how many this index also moved on (same sign of daily
-return) — a coincidence check, not evidence either one drove the other.</p>
+{escape(ticker)}'s own price action above. This summary table is
+descriptive only — none of it changes which days are flagged as candidate
+incidents below. <em>Moved with</em> is a quick raw-return coincidence
+check: of the candidate incident days already flagged, how many this index
+also moved on (same sign of daily return). Each ranked candidate incident
+below carries a fuller, statistical version of this same question — that
+index's own market-model abnormal return, CAR, and significance on that
+specific day, not just its raw return's sign.</p>
 <div class="scroll"><table><thead><tr><th class="txt">Index</th>
 <th class="txt">Ticker</th><th>Window return</th><th>Trend</th>
 <th>Moved with {escape(ticker)}</th></tr></thead><tbody>
@@ -368,10 +371,55 @@ def _incident_table(incidents: list[Incident], window: tuple[int, int],
     )
 
 
+def _index_breakdown_table(day, window: tuple[int, int], nifty_indices: dict) -> str:
+    """For one incident day, how each Nifty index moved - its own
+    market-model abnormal return, CAR and significance over the same event
+    window, anchored to this already-flagged day rather than an independent
+    search for the index's own events (see ``ceia/nifty.py``). Empty when no
+    index has an event study computed for this day (unavailable, skipped as
+    the primary benchmark itself, or the event study wasn't requested).
+    """
+    day_key = day.isoformat()
+    rows = []
+    for name, index in nifty_indices.items():
+        stats = index.incident_stats.get(day_key)
+        if not stats:
+            continue
+        car_value = stats.get("car")
+        t_stat = stats.get("t_stat")
+        p_value = stats.get("p_value")
+        p_value_t = stats.get("p_value_t")
+        rows.append(
+            f"<tr><td class=\"txt\">{escape(name)}</td>"
+            f'<td class="{_cls(stats["abnormal_return"])}">'
+            f'{_pct(stats["abnormal_return"])}</td>'
+            f"<td>{stats['abnormal_return_z']:+.1f}</td>"
+            f'<td class="{_cls(car_value or 0)}">'
+            f"{_pct(car_value) if car_value is not None and pd.notna(car_value) else '—'}</td>"
+            f"<td>{f'{t_stat:.2f}' if t_stat is not None else '—'}</td>"
+            f"<td>{f'{p_value:.3f}' if p_value is not None else '—'}</td>"
+            f"<td>{f'{p_value_t:.3f}' if p_value_t is not None else '—'}</td></tr>"
+        )
+    if not rows:
+        return ""
+    before, after = window
+    return (
+        '<h4 style="margin:16px 0 4px;font-size:.92rem">How the Nifty indices moved '
+        "on this same day — each index's own abnormal return against "
+        "the same benchmark the company is measured against, not evidence "
+        "either moved the other</h4>"
+        '<div class="scroll"><table><thead><tr><th class="txt">Index</th>'
+        f"<th>Abnormal</th><th>z</th><th>CAR[{before},+{after}]</th>"
+        "<th>t</th><th>p**</th><th>p(t)†</th></tr></thead><tbody>"
+        + "".join(rows) + "</tbody></table></div>"
+    )
+
+
 def _incident_sections(incidents: list[Incident], company: str, benchmark: str,
-                       window: tuple[int, int]) -> str:
+                       window: tuple[int, int], nifty_indices: dict | None = None) -> str:
     if not incidents:
         return ""
+    nifty_indices = nifty_indices or {}
     blocks = []
     for rank, inc in enumerate(incidents, 1):
         paragraphs = "".join(
@@ -393,6 +441,7 @@ def _incident_sections(incidents: list[Incident], company: str, benchmark: str,
                 "corroborating signal, not part of the flagging test.</p>"
             )
         p_value = (inc.car or {}).get("p_value")
+        index_block = _index_breakdown_table(inc.day, window, nifty_indices)
         blocks.append(
             f'<div class="incident"><h3><span class="rank">#{rank}</span>'
             f"{inc.day:%d %B %Y}</h3>"
@@ -405,7 +454,7 @@ def _incident_sections(incidents: list[Incident], company: str, benchmark: str,
             + (f'<span class="tag">CAR permutation p={p_value:.3f}</span>'
                if p_value is not None else "")
             + "</div>"
-            f"{paragraphs}{volume_note}{source_block}</div>"
+            f"{paragraphs}{volume_note}{index_block}{source_block}</div>"
         )
     return "".join(blocks)
 
@@ -528,9 +577,14 @@ estimation-window observations the residual scale was fitted on, so it
 widens on short estimation windows rather than assuming a large sample.
 <em>***Robust</em> counts how many of a 3×3
 grid of nearby coverage/return threshold choices still flag this day (9 is
-the most robust; a day flagged in only 1–2 is threshold-sensitive).</p>
+the most robust; a day flagged in only 1–2 is threshold-sensitive). Where a
+Nifty index event study was run (see below), each flagged day also shows how
+that index moved on the same day, using the same <code>t</code>/<em>p**</em>/
+<em>p(t)†</em> statistics computed for that index against the same
+benchmark — a coincidence check for whether the move reached beyond this one
+stock, not evidence either one drove the other.</p>
 {_incident_table(incidents, config.event_window, robustness)}
-{_incident_sections(incidents, safe_company, safe_benchmark, config.event_window)}
+{_incident_sections(incidents, safe_company, safe_benchmark, config.event_window, getattr(analysis, "nifty_indices", {}) or {})}
 
 <h2>Daily detail</h2>
 <p>Every trading day in the window. Highlighted rows are flagged days.</p>

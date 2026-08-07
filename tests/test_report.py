@@ -622,6 +622,45 @@ class TestNiftySection:
         assert "1/1" in html  # both fell that day - same sign, one candidate day
 
 
+class TestIndexBreakdownTable:
+    """The per-incident 'how each index moved on this day' breakdown -
+    the real per-index event study, nested under the company's own
+    already-flagged candidate day rather than a separate section."""
+
+    def test_shown_when_the_index_has_stats_for_this_day(self):
+        day = date(2023, 1, 25)
+        incident = make_incident(day=day)
+        nifty = {"Nifty Auto": IndexSeries(
+            name="Nifty Auto", ticker="^CNXAUTO", provider="csv",
+            model_kind="market-model",
+            incident_stats={day.isoformat(): {
+                "abnormal_return": -0.04, "abnormal_return_z": -3.1,
+                "car": -0.06, "days": 3, "t_stat": -2.8,
+                "p_value": 0.02, "p_value_t": 0.015,
+            }},
+        )}
+        html = build_html(make_analysis(incidents=[incident], nifty_indices=nifty))
+        assert "How the Nifty indices moved on this same day" in html
+        assert "Nifty Auto" in html
+        assert "-4.00%" in html   # abnormal return
+        assert "-6.00%" in html   # CAR
+        assert "-3.1" in html     # z
+        assert "0.020" in html    # permutation p
+        assert "0.015" in html    # t-test p
+
+    def test_not_shown_when_the_index_has_no_stats_for_this_day(self):
+        day = date(2023, 1, 25)
+        incident = make_incident(day=day)
+        nifty = {"Nifty Auto": IndexSeries(name="Nifty Auto", ticker="^CNXAUTO",
+                                           provider="csv", incident_stats={})}
+        html = build_html(make_analysis(incidents=[incident], nifty_indices=nifty))
+        assert "How the Nifty indices moved on this same day" not in html
+
+    def test_not_shown_when_no_nifty_indices_at_all(self):
+        html = build_html(make_analysis(incidents=[make_incident()]))
+        assert "How the Nifty indices moved on this same day" not in html
+
+
 class TestTimestampIndexHandling:
     """pandas Timestamp subclasses datetime.date.
 

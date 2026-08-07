@@ -255,6 +255,35 @@ class TestNiftyIndices:
         analysis, _, _ = run_pipeline(prices)
         json.dumps(analysis.to_dict(), default=str)
 
+    def test_available_index_gets_its_own_event_study_on_candidate_days(self, prices):
+        """Nifty Bank has enough lead-in history (the same ~220-day window
+        used to fit the company's own market model) to get a real event
+        study, anchored to the days already flagged for the company."""
+        analysis, _, _ = run_pipeline(prices)
+        flagged = {i.day for i in analysis.incidents}
+        assert date(2023, 1, 25) in flagged and date(2023, 1, 27) in flagged
+        bank = analysis.nifty_indices["Nifty Bank"]
+        assert bank.model_kind in ("market-model", "market-adjusted")
+        for day in flagged:
+            assert day.isoformat() in bank.incident_stats
+            stats = bank.incident_stats[day.isoformat()]
+            assert set(stats) >= {"abnormal_return", "abnormal_return_z", "car",
+                                  "t_stat", "p_value", "p_value_t"}
+
+    def test_index_matching_the_benchmark_gets_no_event_study(self, prices):
+        """The company's benchmark is ^NSEI, which is also the Nifty 50
+        ticker - regressing that index on itself would be meaningless."""
+        analysis, _, _ = run_pipeline(prices)
+        nifty50 = analysis.nifty_indices["Nifty 50"]
+        assert nifty50.available
+        assert nifty50.incident_stats == {}
+        assert "same ticker as the primary benchmark" in nifty50.event_study_note
+
+    def test_html_report_renders_the_per_incident_index_breakdown(self, prices):
+        analysis, _, _ = run_pipeline(prices)
+        html = build_html(analysis)
+        assert "How the Nifty indices moved on this same day" in html
+
     def test_irrelevant_story_is_dropped(self, prices):
         _, kept, dropped = run_pipeline(prices)
         assert any("Monsoon" in i.headline for i in dropped)
