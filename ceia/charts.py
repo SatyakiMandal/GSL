@@ -532,3 +532,29 @@ def news_coverage_svg(series: pd.DataFrame, items: list, company: str) -> str:
     )
     parts.append("</svg>")
     return "".join(parts)
+
+
+def index_sparkline_svg(daily: pd.DataFrame) -> str:
+    """A tiny trend line for one Nifty index's rebased price path over the
+    analysis window - deliberately not a full chart with axes or hover: the
+    Nifty section in the report is a table of six indices (see
+    ``ceia.report._nifty_section``), and a full multi-panel timeline per
+    index would compete with, rather than support, the company's own chart.
+    Coloured green/red by whether the index ended the window up or down.
+    """
+    if daily.empty or len(daily) < 2:
+        return '<span class="note">—</span>'
+    values = daily["level"].astype(float).tolist()
+    low, high = min(values), max(values)
+    span = (high - low) or 1.0
+    w, h, pad = 110.0, 26.0, 2.0
+    n = len(values)
+    xs = [pad + i * (w - 2 * pad) / (n - 1) for i in range(n)]
+
+    def y_of(v: float) -> float:
+        return h - pad - (v - low) / span * (h - 2 * pad)
+
+    points = " ".join(f"{x:.1f},{y_of(v):.1f}" for x, v in zip(xs, values))
+    css = "spark-pos" if values[-1] >= values[0] else "spark-neg"
+    return (f'<svg viewBox="0 0 {w:.0f} {h:.0f}" class="spark" role="img" '
+            f'aria-hidden="true"><polyline points="{points}" class="{css}"/></svg>')

@@ -26,6 +26,7 @@ import pandas as pd
 
 from . import align, eventstudy, returns
 from . import macro as macro_mod
+from . import nifty as nifty_mod
 from .fetcher import DEFAULT_USER_AGENT, Fetcher
 from .ingest import IngestResult, run as run_ingest
 from .models import NewsItem, RunConfig
@@ -52,6 +53,7 @@ class Analysis:
     diagnostics: dict = field(default_factory=dict)
     macro_events: list = field(default_factory=list)
     macro: dict = field(default_factory=dict)
+    nifty_indices: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         table = self.daily.reset_index()
@@ -61,6 +63,15 @@ class Analysis:
             secondary_table = self.secondary_daily.reset_index()
             secondary_table["date"] = secondary_table["date"].astype(str)
             secondary["daily"] = json.loads(secondary_table.to_json(orient="records"))
+        nifty = {}
+        for name, index in self.nifty_indices.items():
+            entry = {"ticker": index.ticker, "provider": index.provider,
+                     "window_return": index.window_return, "note": index.note}
+            if index.available:
+                idx_table = index.daily.reset_index()
+                idx_table["date"] = idx_table["date"].astype(str)
+                entry["daily"] = json.loads(idx_table.to_json(orient="records"))
+            nifty[name] = entry
         return {
             "company": self.config.company,
             "ticker": self.config.ticker,
@@ -77,6 +88,7 @@ class Analysis:
             "threshold_robustness": self.robustness,
             "flagging_diagnostics": self.diagnostics,
             "macro": self.macro,
+            "nifty_indices": nifty,
             "unattributed_items": [
                 {"url": i.url, "source": i.source, "headline": i.headline,
                  "reason": i.timestamp_confidence}
@@ -114,6 +126,7 @@ def analyse(
     permutations: int = returns.DEFAULT_PERMUTATIONS,
     macro_provider: PriceProvider | None = None,
     macro_fetcher=None,
+    skip_nifty_indices: bool = False,
 ) -> Analysis:
     frame, model, price_meta = returns.build(
         config.ticker, config.benchmark, config.start, config.end,
@@ -195,6 +208,10 @@ def analyse(
     macro_summary = macro_mod.macro_summary(
         config.start, config.end, provider=macro_provider, fetcher=macro_fetcher)
 
+    nifty_indices = ({} if skip_nifty_indices else
+                     nifty_mod.load_nifty_indices(config.start, config.end,
+                                                  providers=providers))
+
     return Analysis(
         config=config,
         daily=table,
@@ -212,6 +229,7 @@ def analyse(
         diagnostics=diagnostics,
         macro_events=macro_events,
         macro=macro_summary,
+        nifty_indices=nifty_indices,
     )
 
 
@@ -273,6 +291,20 @@ def _print(analysis: Analysis) -> None:
     elif sec_meta.get("note"):
         print(f"Secondary benchmark ({sec_meta.get('ticker', '?')}): "
               f"{sec_meta['note']}")
+
+    if analysis.nifty_indices:
+        print("Nifty sector indices (descriptive backdrop, not part of flagging):")
+        candidate_days = [i.day for i in analysis.incidents]
+        for name, index in analysis.nifty_indices.items():
+            if not index.available:
+                print(f"   {name:<12} unavailable — {index.note}")
+                continue
+            agreement = nifty_mod.same_direction_rate(
+                index, analysis.daily, candidate_days)
+            agree_str = (f", moved with {config.ticker} on {agreement['agree']}/"
+                        f"{agreement['n']} candidate day(s)" if agreement["n"] else "")
+            print(f"   {name:<12} {index.window_return * 100:+.2f}% over the window"
+                  f"{agree_str}")
 
     if analysis.daily.empty:
         print("\nNo trading days in the analysis window.")
@@ -395,6 +427,11 @@ def main() -> None:
                              "needed) still show either way. Useful if Yahoo "
                              "is rate-limiting this connection - see the "
                              "README's note on shared/proxied egress.")
+    parser.add_argument("--skip-nifty-indices", action="store_true",
+                        help="Don't fetch Nifty 50/Bank/Auto/Energy/IT/Metal "
+                             "as reference lines/stats. Six extra price "
+                             "fetches otherwise - useful if Yahoo is "
+                             "rate-limiting this connection.")
     parser.add_argument("--price-csv", default=None,
                         help="Directory of <SYMBOL>.csv files; forces the CSV provider.")
     parser.add_argument("--api-key", default=None,
@@ -469,6 +506,7 @@ def main() -> None:
             coverage_threshold=args.coverage_z, return_threshold=args.return_z,
             providers=providers, permutations=args.permutations,
             macro_provider=macro_provider, macro_fetcher=macro_fetcher,
+            skip_nifty_indices=args.skip_nifty_indices,
         )
     except PriceError as exc:
         print(f"\nPrice data unavailable: {exc}")

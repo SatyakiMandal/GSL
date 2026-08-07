@@ -20,10 +20,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ceia.charts import timeline_svg  # noqa: E402
+from ceia.charts import index_sparkline_svg, timeline_svg  # noqa: E402
 from ceia.eventstudy import Incident  # noqa: E402
 from ceia.macro import MacroEvent  # noqa: E402
 from ceia.models import NewsItem, RunConfig  # noqa: E402
+from ceia.nifty import IndexSeries  # noqa: E402
 from ceia.narrative import incident_narrative, summary_narrative  # noqa: E402
 from ceia.report import build_html  # noqa: E402
 
@@ -69,10 +70,11 @@ class FakeAnalysis:
     unattributed: list = field(default_factory=list)
     macro_events: list = field(default_factory=list)
     macro: dict = field(default_factory=dict)
+    nifty_indices: dict = field(default_factory=dict)
 
 
 def make_analysis(incidents=None, unattributed=None, daily=None,
-                  macro_events=None, macro=None) -> FakeAnalysis:
+                  macro_events=None, macro=None, nifty_indices=None) -> FakeAnalysis:
     days = pd.to_datetime(["2023-01-24", "2023-01-25", "2023-01-27"])
     frame = daily if daily is not None else pd.DataFrame({
         "close": [3400.0, 2930.0, 2400.0],
@@ -109,6 +111,7 @@ def make_analysis(incidents=None, unattributed=None, daily=None,
         unattributed=unattributed or [],
         macro_events=macro_events or [],
         macro=macro or {},
+        nifty_indices=nifty_indices or {},
     )
 
 
@@ -318,6 +321,31 @@ class TestCharts:
         assert ">25 Jan<" in svg
         assert ">27 Jan<" in svg
         assert svg.count('class="badge-date-bg"') == 2
+
+
+class TestIndexSparkline:
+    def test_renders_a_polyline_for_a_rising_index(self):
+        daily = pd.DataFrame({"level": [100.0, 103.0, 108.0]})
+        svg = index_sparkline_svg(daily)
+        assert svg.startswith("<svg") and svg.endswith("</svg>")
+        assert "spark-pos" in svg
+
+    def test_falling_index_gets_the_negative_class(self):
+        daily = pd.DataFrame({"level": [100.0, 97.0, 92.0]})
+        svg = index_sparkline_svg(daily)
+        assert "spark-neg" in svg
+
+    def test_empty_frame_renders_a_placeholder_not_a_crash(self):
+        assert index_sparkline_svg(pd.DataFrame()) == '<span class="note">—</span>'
+
+    def test_single_row_does_not_divide_by_zero(self):
+        daily = pd.DataFrame({"level": [100.0]})
+        assert "note" in index_sparkline_svg(daily)
+
+    def test_flat_series_does_not_divide_by_zero(self):
+        daily = pd.DataFrame({"level": [100.0, 100.0, 100.0]})
+        svg = index_sparkline_svg(daily)
+        assert "<svg" in svg
 
 
 class TestHtmlReport:
@@ -540,6 +568,58 @@ class TestMacroSection:
         html = build_html(make_analysis(macro=macro))
         assert "<script>evil</script>" not in html
         assert "&lt;script&gt;evil" in html
+
+
+class TestNiftySection:
+    def test_no_nifty_data_renders_no_section(self):
+        html = build_html(make_analysis())
+        assert "<h2>Nifty sector indices</h2>" not in html
+
+    def test_available_index_shows_window_return_and_trend(self):
+        daily = pd.DataFrame({
+            "close": [100.0, 105.0, 108.0], "return": [0.0, 0.03, 0.04],
+            "level": [100.0, 105.0, 108.0],
+        }, index=pd.to_datetime(["2023-01-24", "2023-01-25", "2023-01-27"]))
+        nifty = {"Nifty 50": IndexSeries(name="Nifty 50", ticker="^NSEI",
+                                         provider="csv", daily=daily,
+                                         window_return=0.08)}
+        html = build_html(make_analysis(nifty_indices=nifty))
+        assert "<h2>Nifty sector indices</h2>" in html
+        assert "Nifty 50" in html
+        assert "^NSEI" in html
+        assert "+8.00%" in html
+        assert 'class="spark"' in html
+
+    def test_unavailable_index_is_disclosed_not_hidden(self):
+        nifty = {"Nifty Metal": IndexSeries(name="Nifty Metal", ticker="^CNXMETAL",
+                                            note="unavailable: no CSV at ...")}
+        html = build_html(make_analysis(nifty_indices=nifty))
+        assert "Nifty Metal" in html
+        assert "unavailable: no CSV at" in html
+
+    def test_moved_with_count_reflects_candidate_day_agreement(self):
+        """The 'moved with' stat should count real same-day agreement, not
+        just be present - built from a daily table with a plain-date index
+        (as ceia.analyze.analyse() produces it) so the join actually lands."""
+        incident_day = date(2023, 1, 25)
+        daily = pd.DataFrame({
+            "close": [100.0, 90.0], "return": [0.0, -0.10],
+            "benchmark_return": [0.0, -0.02], "abnormal_return": [0.0, -0.08],
+            "abnormal_return_z": [0.0, -8.0], "item_count": [1, 3],
+            "unique_count": [1, 3], "mean_sentiment": [0.0, -0.4],
+            "weighted_sentiment": [0.0, -0.4], "dominant_event": ["other", "regulatory"],
+            "sources": ["et", "et,bl"], "coverage_z": [0.0, 1.2], "sentiment_z": [0.0, -1.0],
+        }, index=[date(2023, 1, 24), incident_day])
+        index_daily = pd.DataFrame({
+            "close": [100.0, 95.0], "return": [0.0, -0.05], "level": [100.0, 95.0],
+        }, index=pd.to_datetime(["2023-01-24", "2023-01-25"]))
+        nifty = {"Nifty Bank": IndexSeries(name="Nifty Bank", ticker="^NSEBANK",
+                                           provider="csv", daily=index_daily,
+                                           window_return=-0.05)}
+        incident = make_incident(day=incident_day)
+        html = build_html(make_analysis(incidents=[incident], daily=daily,
+                                        nifty_indices=nifty))
+        assert "1/1" in html  # both fell that day - same sign, one candidate day
 
 
 class TestTimestampIndexHandling:

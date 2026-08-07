@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .charts import news_coverage_svg, price_level_svg, timeline_svg
+from .charts import index_sparkline_svg, news_coverage_svg, price_level_svg, timeline_svg
 from .eventstudy import Incident
 from .narrative import incident_narrative, summary_narrative
 from .unlisted import real_updates
@@ -221,6 +221,51 @@ date or fiscal year it actually applies to.</p>
 <div class="grid">{crude_stat}{gsec_stat}{deficit_stat}</div>
 {events_block}
 {gaps_block}
+"""
+
+
+def _nifty_section(nifty_indices: dict, incidents: list, daily: pd.DataFrame,
+                   ticker: str) -> str:
+    """Nifty 50 and five sector indices as reference lines/stats alongside
+    the company's own analysis - the professor's request, reused rather than
+    re-run as a second event study: each index's own rebased trend and
+    window return, plus how often it moved the same direction as the
+    company on the days already flagged as candidate incidents. Descriptive
+    only, like the macro-economic section above it - never part of flagging.
+    """
+    if not nifty_indices:
+        return ""
+    from .nifty import same_direction_rate
+    candidate_days = [i.day for i in incidents]
+    rows = []
+    for name, index in nifty_indices.items():
+        if not index.available:
+            rows.append(
+                f"<tr><td>{escape(name)}</td><td class=\"txt\">{escape(index.ticker)}</td>"
+                f'<td colspan="3" class="txt note">{escape(index.note or "unavailable")}</td></tr>'
+            )
+            continue
+        agreement = same_direction_rate(index, daily, candidate_days)
+        agree_cell = (f"{agreement['agree']}/{agreement['n']}"
+                     if agreement["n"] else "—")
+        rows.append(
+            f"<tr><td>{escape(name)}</td><td class=\"txt\">{escape(index.ticker)}</td>"
+            f'<td class="{_cls(index.window_return)}">{_pct(index.window_return)}</td>'
+            f"<td>{index_sparkline_svg(index.daily)}</td>"
+            f"<td>{agree_cell}</td></tr>"
+        )
+    return f"""
+<h2>Nifty sector indices</h2>
+<p>Nifty 50 and five sector indices, rebased and read the same window as
+{escape(ticker)}'s own price action above — context, not a second
+significance test: none of this changes which days are flagged as candidate
+incidents. <em>Moved with</em> counts, of the candidate incident days already
+flagged above, how many this index also moved on (same sign of daily
+return) — a coincidence check, not evidence either one drove the other.</p>
+<div class="scroll"><table><thead><tr><th class="txt">Index</th>
+<th class="txt">Ticker</th><th>Window return</th><th>Trend</th>
+<th>Moved with {escape(ticker)}</th></tr></thead><tbody>
+{"".join(rows)}</tbody></table></div>
 """
 
 
@@ -466,6 +511,7 @@ context, not a candidate incident, so they are not numbered or ranked below.
 Hover any bar or marker for its exact date and value.</p>
 {timeline_svg(daily, incident_days, config.company, config.benchmark, incidents=incidents, macro_events=macro_events)}
 {_macro_section(getattr(analysis, "macro", {}) or {})}
+{_nifty_section(getattr(analysis, "nifty_indices", {}) or {}, incidents, daily, config.ticker)}
 
 <h2>Candidate incident days</h2>
 <p>Ranked by the combination of an unusual abnormal return and notable coverage.

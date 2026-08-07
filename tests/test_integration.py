@@ -85,6 +85,13 @@ def prices(tmp_path: Path) -> Path:
     pd.DataFrame({"date": pd.to_datetime(days),
                   "close": 100 * np.cumprod(1 + peer)}
                  ).to_csv(tmp_path / "PEER.NS.csv", index=False)
+    # Only one of the six Nifty sector indices gets a CSV fixture - the rest
+    # must degrade gracefully (see TestNiftyIndices), same as a bad/missing
+    # secondary-benchmark ticker already does elsewhere in this file.
+    bank = 0.00025 + 1.1 * market + rng.normal(0, 0.007, len(days))
+    pd.DataFrame({"date": pd.to_datetime(days),
+                  "close": 100 * np.cumprod(1 + bank)}
+                 ).to_csv(tmp_path / "_idx_NSEBANK.csv", index=False)
     return tmp_path
 
 
@@ -117,7 +124,7 @@ def build_items() -> list[NewsItem]:
 
 
 def run_pipeline(price_dir: Path, start=date(2023, 1, 20), end=date(2023, 2, 3),
-                 benchmark2: str | None = None):
+                 benchmark2: str | None = None, skip_nifty: bool = False):
     config = RunConfig(company="Testco", ticker="TEST.NS", benchmark="^NSEI",
                        benchmark2=benchmark2,
                        start=start, end=end, aliases=["Testco Ltd", "Testco"],
@@ -141,7 +148,8 @@ def run_pipeline(price_dir: Path, start=date(2023, 1, 20), end=date(2023, 2, 3),
     analysis = analyse(config, kept, {"stats": {"unique_after_dedupe": len(kept)}},
                        providers=[CsvProvider(price_dir)], return_threshold=1.5,
                        macro_provider=CsvProvider(price_dir),
-                       macro_fetcher=SkippedFetcher())
+                       macro_fetcher=SkippedFetcher(),
+                       skip_nifty_indices=skip_nifty)
     return analysis, kept, dropped
 
 
@@ -198,6 +206,54 @@ class TestSecondaryBenchmark:
         analysis, _, _ = run_pipeline(prices, benchmark2="PEER.NS")
         html = build_html(analysis)
         assert "PEER.NS" in html
+
+
+class TestNiftyIndices:
+    """The professor's Nifty-index request, reused as reference lines/stats
+    rather than a second event study - see ceia/nifty.py's module docstring."""
+
+    def test_all_six_indices_are_attempted(self, prices):
+        analysis, _, _ = run_pipeline(prices)
+        assert set(analysis.nifty_indices) == {
+            "Nifty 50", "Nifty Bank", "Nifty Auto", "Nifty Energy",
+            "Nifty IT", "Nifty Metal",
+        }
+
+    def test_available_index_populates_daily_and_window_return(self, prices):
+        analysis, _, _ = run_pipeline(prices)
+        nifty50 = analysis.nifty_indices["Nifty 50"]
+        bank = analysis.nifty_indices["Nifty Bank"]
+        for index in (nifty50, bank):
+            assert index.available
+            assert not index.daily.empty
+            assert index.window_return == index.window_return  # not NaN
+
+    def test_missing_index_csv_degrades_without_sinking_the_run(self, prices):
+        """Four of the six indices have no CSV fixture - each must degrade
+        to its own note, exactly like a bad secondary-benchmark ticker does,
+        never raise or blank out the primary analysis."""
+        analysis, _, _ = run_pipeline(prices)
+        auto = analysis.nifty_indices["Nifty Auto"]
+        assert not auto.available
+        assert "unavailable" in auto.note
+        assert not analysis.daily.empty
+        assert date(2023, 1, 25) in {i.day for i in analysis.incidents}
+
+    def test_skip_nifty_indices_leaves_it_empty(self, prices):
+        analysis, _, _ = run_pipeline(prices, skip_nifty=True)
+        assert analysis.nifty_indices == {}
+
+    def test_html_report_renders_the_nifty_section(self, prices):
+        analysis, _, _ = run_pipeline(prices)
+        html = build_html(analysis)
+        assert "Nifty 50" in html
+        assert "Nifty Bank" in html
+        assert "Nifty Auto" in html  # shown even though unavailable
+
+    def test_json_payload_is_serialisable_with_nifty_indices(self, prices):
+        import json
+        analysis, _, _ = run_pipeline(prices)
+        json.dumps(analysis.to_dict(), default=str)
 
     def test_irrelevant_story_is_dropped(self, prices):
         _, kept, dropped = run_pipeline(prices)

@@ -1236,6 +1236,60 @@ to compute. Useful given the Yahoo rate-limit above: a live run can
 otherwise spend up to ~126 seconds retrying a single 429 before giving up
 and disclosing "unavailable" regardless.
 
+## Phase 7 — Nifty sector indices (listed reports only)
+
+The professor's other request from the same round: show Nifty 50 and five
+sector indices (Bank, Auto, Energy, IT, Metal) alongside a company's own
+price analysis, "analysed the same way" as the stock. Read literally that
+would mean six more market-model event studies per run — six more
+estimation windows, six more sets of candidate incident days, six more CAR
+tables. That is not what got built. Confirmed scope instead: the indices
+appear as **extra reference lines/stats**, reusing the news/sentiment/
+candidate-day work already done rather than re-running it — the same
+descriptive, backdrop role the macro-economic section above already plays,
+not a second flagging pipeline.
+
+`ceia/nifty.py` fetches each index (`^NSEI`, `^NSEBANK`, `^CNXAUTO`,
+`^CNXENERGY`, `^CNXIT`, `^CNXMETAL` — NSE's standard Yahoo Finance symbols;
+live history could not be verified from this build environment for the same
+Yahoo-rate-limit reason as everywhere else in this README) through the exact
+same provider chain as the company/benchmark price fetch
+(`ceia.prices.load_prices`), rather than a special-cased path — one index
+failing to load degrades to a note on that index alone, the same
+never-sink-the-run behaviour the secondary-benchmark feature already has.
+For each available index this computes: a price path rebased to 100 at the
+window start (`level`), the window's total return, and — for the days
+already flagged as candidate incidents — how often the index moved the same
+direction (sign of daily return) as the company that day
+(`ceia.nifty.same_direction_rate`). That last figure is a coincidence count,
+not a test: it never changes which days get flagged, same as everything
+else in this section.
+
+### Why a table of sparklines, not six more lines on the timeline
+
+The obvious-looking approach — draw all six index lines directly on the
+existing rebased-price panel, alongside the company and benchmark — was
+tried and rejected. That panel already carries two series (company,
+benchmark) plus incident badges, macro-event diamonds, and a reference
+baseline; adding six more categorical lines to one chart puts it well past
+what a legend and a reader's eye can hold, and the six aren't even
+comparable in scale-of-interest — a reader is asking "did the market/sector
+move like this stock did," a per-index question, not "how do these eight
+series compare to each other on one axis." That is exactly the small-multiples
+case: `ceia/charts.py:index_sparkline_svg()` draws one small, axis-free trend
+line per index (colour-coded green/up or red/down by its own net direction,
+reusing the `.spark`/`.spark-pos`/`.spark-neg` CSS classes that were already
+defined but unused), and the new "Nifty sector indices" report section lays
+these out as one row per index in a table — ticker, window return, trend,
+and the same-direction count — rather than one crowded chart. Wired into
+`build_html` only; the unlisted report keeps its own deliberately narrower
+vocabulary (see Phase 5) and does not gain this section.
+
+`--skip-nifty-indices` (`ceia.analyze` only) skips all six fetches, the same
+opt-out `--skip-macro-prices` provides for the macro section, for the same
+reason: six extra price fetches is six more chances to sit through Yahoo's
+retry/backoff on a rate-limited connection.
+
 ## Reusing the collected corpus
 
 `data/adani_wide_2023.json` holds the 137-item Adani corpus from the validation
