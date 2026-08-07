@@ -415,6 +415,14 @@ def main() -> None:
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--alias", action="append", default=[])
+    parser.add_argument("--sources", nargs="*", default=None,
+                        help="News sources to scrape (live scraping only, "
+                             "ignored with --news). Defaults to the 5 "
+                             "always-on sources. Add business_standard "
+                             "and/or livemint to also opt into their "
+                             "best-effort Wayback Machine fallback (see "
+                             "README Phase 8) in this same command, rather "
+                             "than running ceia.ingest separately first.")
     parser.add_argument("--news", default=None,
                         help="Reuse a Phase 1 JSON run instead of re-scraping.")
     parser.add_argument("--event-window", nargs=2, type=int, default=[-1, 3],
@@ -490,7 +498,8 @@ def main() -> None:
             company=args.company, ticker=ticker, benchmark=args.benchmark,
             benchmark2=args.benchmark2,
             start=date.fromisoformat(args.start), end=date.fromisoformat(args.end),
-            aliases=args.alias, event_window=tuple(args.event_window),
+            aliases=args.alias, sources=args.sources,
+            event_window=tuple(args.event_window),
             min_relevance=args.min_relevance,
         )
     except ValueError as exc:
