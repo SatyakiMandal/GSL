@@ -236,6 +236,33 @@ class TestFetchFallbackAndErrors:
         fetch_financials("INDUSINDBK.NS", fetcher=fetcher)
         assert fetcher.calls == ["https://www.screener.in/company/INDUSINDBK/consolidated/"]
 
+    def test_parsing_failure_falls_through_not_crashes(self, monkeypatch):
+        """A real bug this project shipped: only the network fetch/HTTP-status
+        was guarded, so a page whose HTML had drifted enough to make
+        BeautifulSoup/row-extraction itself raise (not just a bad status)
+        propagated straight out of fetch_financials as a raw, unhandled
+        exception - crashing analyse() and the whole CLI run - instead of
+        falling through to the standalone URL like every other failure mode
+        here does."""
+        import ceia.financials as financials_mod
+
+        def _boom(table):
+            raise AttributeError("page structure changed: no <thead>")
+
+        monkeypatch.setattr(financials_mod, "_quarter_dates", _boom)
+        html = _page(_quarters_table(_BANK_QUARTERS, _BANK_DATES))
+        fetcher = _FakeFetcher({
+            "https://www.screener.in/company/INDUSINDBK/consolidated/": _FakeResp(html),
+            "https://www.screener.in/company/INDUSINDBK/": _FakeResp(html),
+        })
+        with pytest.raises(FinancialsError):
+            fetch_financials("INDUSINDBK.NS", fetcher=fetcher)
+        # Both URLs were tried - the parsing failure didn't stop the fallback.
+        assert fetcher.calls == [
+            "https://www.screener.in/company/INDUSINDBK/consolidated/",
+            "https://www.screener.in/company/INDUSINDBK/",
+        ]
+
     def test_missing_tax_rate_leaves_nopat_none_with_a_reason(self):
         rows = {k: v for k, v in _INDUSTRIAL_QUARTERS.items() if k != "Tax %"}
         html = _page(_quarters_table(rows, _INDUSTRIAL_DATES))

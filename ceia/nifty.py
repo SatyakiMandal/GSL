@@ -149,53 +149,70 @@ def load_nifty_indices(
             continue
 
         try:
-            frame, model, meta = build_returns(
-                ticker, benchmark, start, end,
-                lead_in_days=lead_in_days, providers=providers,
+            out[name] = _event_study_index(
+                name, ticker, benchmark, start, end, candidate_days, candidate_set,
+                event_window, providers, lead_in_days, permutations,
             )
-        except PriceError as exc:
+        except Exception as exc:
+            # Not just PriceError: fit_market_model/cumulative_abnormal_return/
+            # permutation_test_car can raise on degenerate per-index data (e.g.
+            # too little overlapping history for that specific index) that has
+            # nothing to do with the price fetch itself. Any of those failures
+            # must degrade to a note on this one index, per this module's own
+            # documented contract - not crash load_nifty_indices (and with it
+            # the whole report) for every other index and the rest of the run.
             out[name] = IndexSeries(name=name, ticker=ticker,
                                     note=f"unavailable: {exc}")
-            continue
-
-        window = frame.loc[pd.Timestamp(start):pd.Timestamp(end)]
-        if window.empty:
-            out[name] = IndexSeries(name=name, ticker=ticker,
-                                    provider=meta["company_provider"],
-                                    note="no trading days in window")
-            continue
-
-        closes = window["close"].astype(float)
-        daily = pd.DataFrame(index=window.index)
-        daily["close"] = closes
-        daily["return"] = daily_returns(closes)
-        daily["level"] = closes / closes.iloc[0] * 100
-
-        incident_stats = {}
-        for day in candidate_days:
-            ts = pd.Timestamp(day)
-            if ts not in window.index:
-                continue
-            row = window.loc[ts]
-            car = cumulative_abnormal_return(frame, day, event_window)
-            car.update(permutation_test_car(
-                frame, day, event_window, exclude_days=candidate_set,
-                n_permutations=permutations,
-            ))
-            incident_stats[day.isoformat()] = {
-                "abnormal_return": float(row["abnormal_return"]),
-                "abnormal_return_z": float(row["abnormal_return_z"]),
-                **car,
-            }
-
-        out[name] = IndexSeries(
-            name=name, ticker=ticker, provider=meta["company_provider"],
-            daily=daily, window_return=float(closes.iloc[-1] / closes.iloc[0] - 1),
-            model_kind=model.kind, model_note=model.note,
-            beta=model.beta, r_squared=model.r_squared,
-            incident_stats=incident_stats,
-        )
     return out
+
+
+def _event_study_index(
+    name: str, ticker: str, benchmark: str, start: date, end: date,
+    candidate_days: list[date], candidate_set: set[date],
+    event_window: tuple[int, int], providers: list[PriceProvider] | None,
+    lead_in_days: int, permutations: int,
+) -> IndexSeries:
+    frame, model, meta = build_returns(
+        ticker, benchmark, start, end,
+        lead_in_days=lead_in_days, providers=providers,
+    )
+
+    window = frame.loc[pd.Timestamp(start):pd.Timestamp(end)]
+    if window.empty:
+        return IndexSeries(name=name, ticker=ticker,
+                           provider=meta["company_provider"],
+                           note="no trading days in window")
+
+    closes = window["close"].astype(float)
+    daily = pd.DataFrame(index=window.index)
+    daily["close"] = closes
+    daily["return"] = daily_returns(closes)
+    daily["level"] = closes / closes.iloc[0] * 100
+
+    incident_stats = {}
+    for day in candidate_days:
+        ts = pd.Timestamp(day)
+        if ts not in window.index:
+            continue
+        row = window.loc[ts]
+        car = cumulative_abnormal_return(frame, day, event_window)
+        car.update(permutation_test_car(
+            frame, day, event_window, exclude_days=candidate_set,
+            n_permutations=permutations,
+        ))
+        incident_stats[day.isoformat()] = {
+            "abnormal_return": float(row["abnormal_return"]),
+            "abnormal_return_z": float(row["abnormal_return_z"]),
+            **car,
+        }
+
+    return IndexSeries(
+        name=name, ticker=ticker, provider=meta["company_provider"],
+        daily=daily, window_return=float(closes.iloc[-1] / closes.iloc[0] - 1),
+        model_kind=model.kind, model_note=model.note,
+        beta=model.beta, r_squared=model.r_squared,
+        incident_stats=incident_stats,
+    )
 
 
 def same_direction_rate(index: IndexSeries, company_daily: pd.DataFrame,

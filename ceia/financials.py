@@ -208,27 +208,30 @@ def fetch_financials(ticker: str, fetcher: Fetcher | None = None) -> FinancialSu
     ):
         try:
             response = fetcher.get(url)
+            if response.status != 200:
+                raise RuntimeError(f"HTTP {response.status}")
+            soup = BeautifulSoup(response.text, "lxml")
+            table = soup.select_one("#quarters table")
+            if table is None:
+                raise RuntimeError("no quarterly-results table found")
+
+            dates = _quarter_dates(table)
+            currency_match = re.search(r"Figures in ([^/\n]+)", soup.get_text())
+            currency_unit = currency_match.group(1).strip() if currency_match else "Rs. Crores"
+
+            revenue = _row_by_label(table, _REVENUE_LABELS, dates)
+            expenses = _row_by_label(table, _EXPENSE_LABELS, dates)
+            operating_income = _row_by_label(table, _OPERATING_INCOME_LABELS, dates)
+            tax_rate = _row_by_label(table, _TAX_LABELS, dates)
+            order_book, order_book_note = _order_book_status(soup)
         except Exception as exc:
+            # Not just the network fetch: a page whose HTML has drifted from
+            # the shape verified against IndusInd Bank/L&T (see module
+            # docstring) could make BeautifulSoup/row-extraction raise too -
+            # that must fall through to the standalone URL (or the disclosed
+            # "unavailable" note below), not crash the whole report.
             last_error = f"{url}: {exc}"
             continue
-        if response.status != 200:
-            last_error = f"{url}: HTTP {response.status}"
-            continue
-        soup = BeautifulSoup(response.text, "lxml")
-        table = soup.select_one("#quarters table")
-        if table is None:
-            last_error = f"{url}: no quarterly-results table found"
-            continue
-
-        dates = _quarter_dates(table)
-        currency_match = re.search(r"Figures in ([^/\n]+)", soup.get_text())
-        currency_unit = currency_match.group(1).strip() if currency_match else "Rs. Crores"
-
-        revenue = _row_by_label(table, _REVENUE_LABELS, dates)
-        expenses = _row_by_label(table, _EXPENSE_LABELS, dates)
-        operating_income = _row_by_label(table, _OPERATING_INCOME_LABELS, dates)
-        tax_rate = _row_by_label(table, _TAX_LABELS, dates)
-        order_book, order_book_note = _order_book_status(soup)
 
         nopat = None
         nopat_note = ""

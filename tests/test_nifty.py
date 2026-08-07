@@ -212,6 +212,35 @@ class TestIndexEventStudy:
                                  indices={"Nifty Auto": "^CNXAUTO"})
         assert out["Nifty Auto"].incident_stats == {}
 
+    def test_non_price_error_during_event_study_degrades_not_crashes(self):
+        """A real bug this project shipped: the per-index try/except once
+        caught only PriceError, so a non-PriceError failure mid-computation
+        (a bad ticker's history() raising something else, a degenerate fit)
+        crashed load_nifty_indices - and with it the whole report - instead
+        of degrading just that one index, breaking every other section's
+        own documented contract along with it."""
+        class _RaisingProvider(PriceProvider):
+            name = "raising"
+
+            def history(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+                if symbol == "^CNXAUTO":
+                    raise ValueError("boom: not a PriceError")
+                _, bench, _ = _market_and_index_frames()
+                return bench
+
+        provider = _RaisingProvider()
+        start = date(2022, 10, 1)
+        end = date(2022, 10, 15)
+        out = load_nifty_indices(start, end, _BENCHMARK,
+                                 candidate_days=[date(2022, 10, 5)],
+                                 providers=[provider],
+                                 indices={"Nifty 50": _BENCHMARK,
+                                          "Nifty Auto": "^CNXAUTO"})
+        assert not out["Nifty Auto"].available
+        assert "boom: not a PriceError" in out["Nifty Auto"].note
+        # The other index still loads fine - one failure doesn't sink the run.
+        assert out["Nifty 50"].available
+
 
 class TestSameDirectionRate:
     def _index(self, returns: dict) -> IndexSeries:
