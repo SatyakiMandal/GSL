@@ -8,6 +8,10 @@ the ~200 about one company would be both slow and rude. So candidate URLs are
 **pre-filtered on their slug** before anything is fetched — these sites all put
 the story's subject in the URL. Slug filtering is deliberately loose (any alias
 token matches), with the real relevance scoring done on parsed text afterwards.
+That trade only pays for itself on a source too large to fetch whole, though —
+:func:`prefilter` skips the slug guess entirely for any source whose candidate
+count *this run* is small enough to fetch in full (``PREFILTER_SKIP_THRESHOLD``),
+letting the real scorer see everything instead of a URL-based guess.
 
 Everything degrades per source: a site that blocks us or changes layout is
 recorded in the run's ``source_status`` and the rest of the pipeline continues
@@ -117,18 +121,45 @@ def _slug_token_groups(aliases: list[str], ticker: str | None) -> list[frozenset
     return groups
 
 
-def prefilter(candidates: list[Candidate], token_groups: list[frozenset[str]]) -> list[Candidate]:
-    """Keep candidates whose URL slug clears at least one alias group's
-    match threshold (see :func:`_slug_token_groups`).
+# Below this per-source candidate count, prefilter() fetches everything from
+# that source instead of guessing from the URL - see prefilter()'s docstring.
+PREFILTER_SKIP_THRESHOLD = 5000
 
-    This trades a little recall for a large reduction in fetches. A story about
-    the company whose slug never names it will be missed; that is an accepted
-    and disclosed cost, recorded in the run stats as the pre-filter ratio.
+
+def prefilter(candidates: list[Candidate], token_groups: list[frozenset[str]],
+             skip_threshold: int = 0) -> list[Candidate]:
+    """Keep candidates whose URL slug clears at least one alias group's
+    match threshold (see :func:`_slug_token_groups`) - except for a source
+    whose *total* candidate count this run is small enough to fetch in full
+    (``skip_threshold``, 0 by default so this matches the plain slug filter
+    unless a caller opts in), which skips the slug guess for that source
+    entirely and lets every one of its candidates through to the real,
+    text-based relevance scorer instead.
+
+    This trades a little recall for a large reduction in fetches, but only
+    where that trade is actually needed - a low-volume source gains nothing
+    from a URL guess that can only ever undercount real coverage, since the
+    unlisted/pre-IPO space's dedicated trackers (Entrackr, VCCircle, Inc42)
+    return a few thousand candidates over a several-month window (verified
+    live) versus Economic Times' 100k+ over the same window, so "fetch
+    everything from a source this small" is a bounded, affordable trade the
+    other high-volume sources still cannot make. A story on a source too
+    large to fetch whole, whose slug never names the company, is still
+    missed - that remains an accepted and disclosed cost, recorded in the
+    run stats as the pre-filter ratio.
     """
     if not token_groups:
         return candidates
+
+    by_source: dict[str, int] = {}
+    for candidate in candidates:
+        by_source[candidate.source] = by_source.get(candidate.source, 0) + 1
+
     kept = []
     for candidate in candidates:
+        if by_source[candidate.source] <= skip_threshold:
+            kept.append(candidate)
+            continue
         slug = candidate.url.lower()
         for group in token_groups:
             threshold = min(2, len(group))
@@ -348,9 +379,10 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
     log.info("discovered %d candidate URLs", len(candidates))
 
     token_groups = _slug_token_groups(aliases, config.ticker)
-    narrowed = interleave(prefilter(candidates, token_groups))
-    log.info("pre-filtered to %d URLs on slug groups %s", len(narrowed),
-             [sorted(g) for g in token_groups])
+    narrowed = interleave(prefilter(candidates, token_groups, PREFILTER_SKIP_THRESHOLD))
+    log.info("pre-filtered to %d URLs on slug groups %s (sources under %d "
+             "candidates fetched in full, not slug-guessed)",
+             len(narrowed), [sorted(g) for g in token_groups], PREFILTER_SKIP_THRESHOLD)
 
     if limit is not None and len(narrowed) > limit:
         narrowed = cap_across_range(narrowed, limit)

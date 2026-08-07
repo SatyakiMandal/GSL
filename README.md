@@ -351,6 +351,31 @@ extra alias rather than failing the run. On by default for live scraping;
 `--skip-alias-widening` opts out if the extra network round-trip per run
 isn't wanted.
 
+**A third generalized fix: the slug pre-filter itself is the wrong trade for
+a low-volume source.** Real unlisted-company runs (Polymatech, Goa Shipyard)
+kept coming back with `candidates_after_prefilter: 1` out of 265,392
+discovered across all eight sources, for two completely unrelated companies
+— the same shape for both, which is the tell that the bottleneck is a shared
+mechanism, not either company's aliases. Verified directly: across the full
+window, zero of Entrackr's, VCCircle's, or Inc42's candidate URLs (1,553 /
+2,284 / 2,659) contained either company's name in the slug at all — which
+does not distinguish "this source never covered it" from "it covered it
+under a slug that doesn't spell the name out," because the slug filter
+throws candidates away before anything is fetched or read. The fix is not
+"skip the filter for Entrackr/VCCircle/Inc42 specifically," which would be
+exactly the case-by-case pattern already rejected twice above — it is a rule
+keyed to a measurable per-run property instead: `prefilter()`
+(`ceia/ingest.py`) now takes a `skip_threshold`, and any source whose
+*total* candidate count this run is at or below it (`PREFILTER_SKIP_THRESHOLD
+= 5000`) skips the slug guess entirely, letting every one of its candidates
+through to the real, text-based relevance scorer rather than being
+pre-judged by URL string. Economic Times' 115,362 and Moneycontrol's 97,316
+stay well over the threshold and keep the existing slug filter exactly as
+before; Entrackr/VCCircle/Inc42's few-thousand-candidate volumes clear it on
+any realistic run, so they benefit automatically — as would any other
+low-volume source added later, or any high-volume source queried over a
+narrow enough window, with no source list to maintain.
+
 **Round-robin across sources.** Candidates are interleaved before `--limit`
 applies, so a capped run samples every source instead of spending its whole
 budget on whichever ran first.

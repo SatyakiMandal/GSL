@@ -25,6 +25,7 @@ from ceia.ingest import (  # noqa: E402
     prefilter,
     widen_aliases,
 )
+from ceia.ingest import PREFILTER_SKIP_THRESHOLD  # noqa: E402
 from ceia.models import NewsItem, RunConfig  # noqa: E402
 
 
@@ -91,6 +92,53 @@ class TestSlugPrefilter:
         candidates = [Candidate("https://x.com/tcpl-quarterly-earnings.html", "mc")]
         groups = [frozenset({"tata", "consumer", "products"}), frozenset({"tcpl"})]
         assert prefilter(candidates, groups) == candidates
+
+
+class TestSlugPrefilterSkipThreshold:
+    """The generalized fix for thin unlisted-space coverage: a source small
+    enough to fetch entirely this run gains nothing from a URL guess that
+    can only ever undercount real coverage, so it skips the slug filter and
+    lets every one of its candidates through to the real, text-based
+    relevance scorer instead - a rule keyed to a measurable per-run property
+    (this source's own candidate count), not a hardcoded source/company list,
+    so it benefits any company run against any low-volume source."""
+
+    def test_default_threshold_matches_legacy_no_skip_behaviour(self):
+        """prefilter()'s own default (skip_threshold=0) must reproduce the
+        pre-existing filter exactly - the adaptive behaviour is opt-in from
+        ingest.run(), not a change to the function's default contract."""
+        candidates = [Candidate("https://x.com/unrelated-story.html", "et")]
+        assert prefilter(candidates, [frozenset({"adani"})]) == []
+
+    def test_a_source_under_the_threshold_skips_slug_filtering_entirely(self):
+        candidates = [
+            Candidate("https://entrackr.com/some-other-startup-raises-funds", "entrackr"),
+            Candidate("https://entrackr.com/adani-mentioned-nowhere-in-this-slug", "entrackr"),
+        ]
+        kept = prefilter(candidates, [frozenset({"adani"})], skip_threshold=10)
+        assert kept == candidates
+
+    def test_a_source_over_the_threshold_still_gets_slug_filtered(self):
+        candidates = [
+            Candidate("https://x.com/adani-shares-rise.html", "et"),
+            Candidate("https://x.com/unrelated-story.html", "et"),
+        ]
+        kept = prefilter(candidates, [frozenset({"adani"})], skip_threshold=1)
+        assert [c.url for c in kept] == [candidates[0].url]
+
+    def test_threshold_applies_per_source_not_across_the_whole_run(self):
+        """A high-volume source next to a low-volume one must not borrow the
+        other's headroom - each source's own count decides its own fate."""
+        candidates = [
+            Candidate(f"https://x.com/et/story-{i}.html", "et") for i in range(5)
+        ] + [
+            Candidate("https://entrackr.com/adani-not-in-this-slug", "entrackr"),
+        ]
+        kept = prefilter(candidates, [frozenset({"adani"})], skip_threshold=3)
+        assert [c.source for c in kept] == ["entrackr"]
+
+    def test_ingest_module_wires_the_named_constant_not_a_magic_number(self):
+        assert PREFILTER_SKIP_THRESHOLD > 0
 
 
 class _FakeResponse:
