@@ -6,6 +6,9 @@ lxml>=5.0
 beautifulsoup4>=4.12
 yfinance>=0.2.40
 
+# Phase 2 (t-distribution significance testing)
+scipy>=1.10
+
 # Phase 1 (ingestion + FinBERT sentiment, GoEmotions)
 # --extra-index-url below routes torch to the CPU-only wheel instead of the
 # default CUDA build, which is ~4x smaller and the only kind a deploy host

@@ -291,6 +291,7 @@ def _incident_table(incidents: list[Incident], window: tuple[int, int],
         car_value = car.get("car")
         t_stat = car.get("t_stat")
         p_value = car.get("p_value")
+        p_value_t = car.get("p_value_t")
         robust = robust_days.get(inc.day.isoformat())
         robust_cell = (f"{robust['flagged_in']}/{robust['of']}" if robust else "—")
         rows.append(
@@ -304,6 +305,7 @@ def _incident_table(incidents: list[Incident], window: tuple[int, int],
             f"{_pct(car_value) if car_value is not None else '—'}</td>"
             f"<td>{f'{t_stat:.2f}' if t_stat is not None else '—'}</td>"
             f"<td>{f'{p_value:.3f}' if p_value is not None else '—'}</td>"
+            f"<td>{f'{p_value_t:.3f}' if p_value_t is not None else '—'}</td>"
             f"<td>{robust_cell}</td>"
             f'<td class="txt">{"consistent" if inc.direction_agrees else "opposite"}</td>'
             f'<td class="txt">{escape(inc.dominant_event or "—")}</td>'
@@ -313,7 +315,7 @@ def _incident_table(incidents: list[Incident], window: tuple[int, int],
     return (
         '<div class="scroll"><table><thead><tr>'
         "<th>#</th><th>Date</th><th>Abnormal return</th><th>z</th><th>Items</th>"
-        f"<th>Tone</th><th>CAR[{before},+{after}]</th><th>t</th><th>p**</th>"
+        f"<th>Tone</th><th>CAR[{before},+{after}]</th><th>t</th><th>p**</th><th>p(t)†</th>"
         '<th>Robust***</th>'
         '<th class="txt">Tone vs price</th><th class="txt">Main topic</th>'
         '<th class="txt">Emotion*</th>'
@@ -473,7 +475,12 @@ alongside tone, not a substitute for it. <em>**p</em> is a permutation-test
 p-value for the CAR — the fraction of random comparable-length windows in
 this stock's own price history with as extreme a move, an alternative to
 the <code>t</code> column that doesn't need to assume a large, independent,
-normally distributed sample. <em>***Robust</em> counts how many of a 3×3
+normally distributed sample. <em>†p(t)</em> is the classic two-tailed
+Student's-t p-value for the same <code>t</code> statistic, shown alongside
+(not instead of) the permutation p-value; it also accounts for how many
+estimation-window observations the residual scale was fitted on, so it
+widens on short estimation windows rather than assuming a large sample.
+<em>***Robust</em> counts how many of a 3×3
 grid of nearby coverage/return threshold choices still flag this day (9 is
 the most robust; a day flagged in only 1–2 is threshold-sensitive).</p>
 {_incident_table(incidents, config.event_window, robustness)}

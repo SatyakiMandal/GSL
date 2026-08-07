@@ -26,6 +26,7 @@ from ceia.returns import (  # noqa: E402
     daily_returns,
     fit_market_model,
     permutation_test_car,
+    t_equivalent_threshold,
     trading_days,
 )
 
@@ -162,6 +163,7 @@ class TestAbnormalReturns:
         out = abnormal_returns(frame, model)
         assert out.attrs["ar_scale"] == pytest.approx(model.residual_sd)
         assert "estimation-window" in out.attrs["ar_scale_source"]
+        assert out.attrs["ar_scale_df"] == model.observations - 2
 
     def test_z_falls_back_and_says_so(self):
         from ceia.returns import MarketModel
@@ -170,6 +172,32 @@ class TestAbnormalReturns:
                                                   float("nan"), False))
         assert "analysis-window" in out.attrs["ar_scale_source"]
         assert np.isfinite(out.attrs["ar_scale"])
+        assert out.attrs["ar_scale_df"] == len(out) - 1
+
+
+class TestTEquivalentThreshold:
+    def test_large_df_is_close_to_the_z_threshold(self):
+        """With hundreds of estimation days, t and z critical values nearly
+        coincide - the adjustment should be small, not a wholesale change."""
+        assert t_equivalent_threshold(1.5, 250) == pytest.approx(1.5, abs=0.02)
+
+    def test_small_df_widens_the_threshold(self):
+        """Fatter t-tails mean a higher bar is needed for the same tail
+        probability as z=1.5 - this is what makes flagging more conservative,
+        not more sensitive, for short estimation windows."""
+        wide = t_equivalent_threshold(1.5, 5)
+        narrow = t_equivalent_threshold(1.5, 60)
+        assert wide > narrow > 1.5
+
+    def test_zero_df_falls_back_to_the_raw_z_threshold(self):
+        """No usable degrees of freedom (e.g. abnormal_returns() was never
+        run) must not raise or silently return nonsense - it should behave
+        exactly like the old flat z-threshold check."""
+        assert t_equivalent_threshold(1.5, 0) == 1.5
+
+    def test_threshold_shrinks_toward_z_as_df_grows(self):
+        thresholds = [t_equivalent_threshold(1.5, df) for df in (5, 20, 120)]
+        assert thresholds == sorted(thresholds, reverse=True)
 
 
 class TestCumulativeAbnormalReturn:
@@ -185,6 +213,25 @@ class TestCumulativeAbnormalReturn:
         assert result["days"] == 5  # -1, 0, +1, +2, +3
         expected = frame["abnormal_return"].iloc[29:34].sum()
         assert result["car"] == pytest.approx(expected)
+
+    def test_p_value_t_matches_the_existing_t_stat(self):
+        """p_value_t is a classic two-tailed Student's-t p-value computed
+        from the raw t_stat that was already being reported - it augments
+        the permutation p-value rather than replacing it."""
+        from scipy import stats as scipy_stats
+        frame = self._frame()
+        event = frame.index[30].date()
+        result = cumulative_abnormal_return(frame, event, (-1, 3))
+        df = frame.attrs["ar_scale_df"]
+        expected = 2 * scipy_stats.t.sf(abs(result["t_stat"]), df)
+        assert result["p_value_t"] == pytest.approx(expected)
+
+    def test_p_value_t_is_none_without_usable_degrees_of_freedom(self):
+        frame = self._frame()
+        frame.attrs["ar_scale_df"] = 0
+        event = frame.index[30].date()
+        result = cumulative_abnormal_return(frame, event, (-1, 3))
+        assert result["p_value_t"] is None
 
     def test_window_is_in_trading_days_not_calendar_days(self):
         frame = self._frame()

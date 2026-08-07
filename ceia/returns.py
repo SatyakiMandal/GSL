@@ -27,6 +27,7 @@ from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 from .prices import PriceError, PriceProvider, load_prices
 
@@ -157,15 +158,42 @@ def abnormal_returns(frame: pd.DataFrame, model: MarketModel) -> pd.DataFrame:
     # understates how unusual that event was.
     scale = model.residual_sd
     scale_source = "estimation-window residual SD"
+    # Degrees of freedom behind ``scale`` - two parameters (alpha, beta) were
+    # fitted out of the estimation window, matching the ddof=2 already used
+    # for residual_sd above; the analysis-window fallback below loses only
+    # the one degree of freedom a plain sample SD costs. Carried alongside
+    # scale so a *small* estimation window - not just a missing one - is
+    # reflected in how strict the t-distribution-based tests below are.
+    df = max(model.observations - 2, 0)
     if not np.isfinite(scale) or scale == 0:
         scale = float(out["abnormal_return"].std(ddof=1))
         scale_source = "analysis-window SD (weaker: inflated by the events in it)"
+        df = max(len(out) - 1, 0)
     out.attrs["ar_scale"] = scale
     out.attrs["ar_scale_source"] = scale_source
+    out.attrs["ar_scale_df"] = df
     out["abnormal_return_z"] = (
         out["abnormal_return"] / scale if scale and np.isfinite(scale) else np.nan
     )
     return out
+
+
+def t_equivalent_threshold(z_threshold: float, df: int) -> float:
+    """The t-distribution critical value with the same two-tailed tail
+    probability a z-threshold has under the standard normal.
+
+    Always >= ``z_threshold`` (equal only as ``df`` -> infinity), and more so
+    the smaller ``df`` is - a short estimation window makes the same
+    "how many standard deviations is unusual" input a harder bar to clear,
+    which is the correct behaviour: a standard deviation estimated from few
+    observations is itself less certain, and a z-test silently ignores that.
+    Falls back to ``z_threshold`` unchanged when ``df`` is too small for a
+    t-distribution to be meaningful (there's no better answer available).
+    """
+    if df <= 0:
+        return z_threshold
+    tail_prob = stats.norm.sf(z_threshold)
+    return float(stats.t.isf(tail_prob, df))
 
 
 def cumulative_abnormal_return(
@@ -190,10 +218,21 @@ def cumulative_abnormal_return(
     car = float(slice_["abnormal_return"].sum())
 
     scale = frame.attrs.get("ar_scale")
+    df = frame.attrs.get("ar_scale_df", 0)
     days = len(slice_)
     # Under the usual independence assumption the CAR's SD scales with sqrt(N).
     t_stat = (car / (scale * np.sqrt(days))
               if scale and np.isfinite(scale) and days else float("nan"))
+    # A classic two-tailed Student's-t p-value for that t_stat, using the
+    # estimation window's own degrees of freedom (where ``scale`` came from -
+    # see abnormal_returns()) rather than the CAR window's day count, since
+    # it's the SD estimate's uncertainty this is testing against. Shown
+    # alongside, not instead of, the permutation-test p-value below: the
+    # permutation test makes no distributional assumption about returns at
+    # all, which is the more rigorous of the two - this is the familiar
+    # textbook number for a reader who wants it, not a replacement.
+    p_value_t = (2 * float(stats.t.sf(abs(t_stat), df))
+                if np.isfinite(t_stat) and df > 0 else None)
 
     truncated = (position + window[0] < 0) or (position + window[1] > len(index) - 1)
     return {
@@ -202,6 +241,7 @@ def cumulative_abnormal_return(
         "start": index[start].date().isoformat(),
         "end": index[end].date().isoformat(),
         "t_stat": float(t_stat) if np.isfinite(t_stat) else None,
+        "p_value_t": p_value_t,
         "truncated": truncated,
         "note": ("window truncated at the edge of the available price series"
                  if truncated else ""),

@@ -607,6 +607,48 @@ degrades to "not computed" with a stated reason rather than a wrong number
 when the price series is too short to draw enough non-overlapping windows.
 Surfaced as a `p` column next to `t` in the CLI, HTML report and GUI.
 
+### Day-flagging against a t-distribution, and a second CAR p-value
+
+The professor advising this project asked for a t-test in place of the
+z-test used to flag candidate days, on the reasoning that it "helps capture
+the outliers better." That framing doesn't hold up mechanically: a
+t-distribution has fatter tails than the normal distribution `z` is drawn
+from, so for the *same* raw statistic, its critical value for a given
+significance level is always at least as large as `z`'s, and strictly
+larger once the sample behind the estimate is small. Swapping to a t-test
+makes flagging **more conservative** — harder to clear the bar — not more
+sensitive to outliers. What the t-distribution *does* buy is more honest:
+`abnormal_return_z` is standardized against a residual standard deviation
+fitted on a finite number of estimation-window trading days, and a
+t-distribution properly accounts for the extra uncertainty in that
+estimate, rather than treating it as if it were known exactly (which is
+what a flat `z` cutoff implicitly assumes).
+
+`ceia/returns.py:t_equivalent_threshold(z_threshold, df)` converts a z-score
+threshold into the t-distribution critical value with the same two-tailed
+tail probability, given the degrees of freedom (`df`) behind the fitted
+residual scale. `abnormal_returns()` now tracks that `df` alongside the
+scale itself (`ar_scale_df` — `estimation observations - 2` when the market
+model fit, or `analysis-window days - 1` on the weaker fallback path).
+`ceia/eventstudy.py:rank_incidents` and `flagging_diagnostics` both compare
+`abnormal_return_z` against this t-equivalent threshold instead of the raw
+`--return-z`/`DEFAULT_RETURN_Z` value — the adjustment is negligible on a
+long, comfortably-sized estimation window (hundreds of trading days), and
+widens automatically on a short one, exactly where a flat z cutoff was
+overstating its own confidence.
+
+The same idea also produces a second CAR p-value:
+`cumulative_abnormal_return()` now reports `p_value_t`, the classic
+two-tailed Student's-t p-value for the existing `t_stat`, computed with
+`ar_scale_df` degrees of freedom. It is shown *alongside*, not instead of,
+the permutation p-value described above — the permutation test remains the
+more rigorous of the two (it does not assume a large, independent, normally
+distributed sample at all), while `p_value_t` gives a classical-statistics
+cross-check a reader may expect to see. Surfaced as a `p(t)` column next to
+`p` in the HTML report. This is the one addition in the project that pulls
+in `scipy` (`t_equivalent_threshold` and `p_value_t` both use
+`scipy.stats`), now a core dependency rather than an optional extra.
+
 ### Sensitivity: does a flag survive a different threshold?
 
 The ranking score orders candidates for attention, but on its own it says

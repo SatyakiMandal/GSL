@@ -141,7 +141,7 @@ def analyse(
         coverage_threshold, return_threshold,
     )
     diagnostics = eventstudy.flagging_diagnostics(
-        table, coverage_threshold, return_threshold,
+        table, coverage_threshold, return_threshold, frame=frame,
     )
 
     secondary_daily = None

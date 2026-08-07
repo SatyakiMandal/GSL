@@ -619,6 +619,63 @@ class TestEmotionValenceSummary:
         assert result["groups"] == {}
 
 
+class TestTDistributionFlagging:
+    """The professor's t-test request, reframed: day-flagging now compares
+    abnormal_return_z against a t-distribution-equivalent threshold rather
+    than a flat z cutoff, which widens the bar as the estimation window
+    shortens (see returns.t_equivalent_threshold)."""
+
+    def _frame(self, observations):
+        days = [date(2023, 1, d) for d in (23, 24, 25, 27, 30)]
+        returns = {
+            days[0]: (0.005, 0.004), days[1]: (0.002, 0.003),
+            days[2]: (0.0155, 0.0), days[3]: (-0.02, -0.015), days[4]: (0.01, 0.005),
+        }
+        frame_days = sorted(returns)
+        company = [returns[d][0] for d in frame_days]
+        benchmark = [returns[d][1] for d in frame_days]
+        frame = pd.DataFrame({
+            "close": 100 * np.cumprod(1 + np.array(company)),
+            "benchmark_close": 100 * np.cumprod(1 + np.array(benchmark)),
+        }, index=pd.to_datetime(frame_days))
+        frame.index.name = "date"
+        frame["return"] = daily_returns(frame["close"])
+        frame["benchmark_return"] = daily_returns(frame["benchmark_close"])
+        return abnormal_returns(frame, MarketModel(0.0, 1.0, 0.01, observations, 0.9, True)), days
+
+    def test_short_estimation_window_is_more_conservative(self):
+        """The same borderline day (abnormal_return_z ~= 1.55, just above the
+        flat z=1.5 threshold) flags on a long estimation window (df=98,
+        t-equivalent threshold ~= 1.51) but not on a short one (df=5,
+        t-equivalent threshold ~= 1.79) - the fatter t-tails demand a bigger
+        move before a short-baseline day counts as unusual."""
+        long_frame, days = self._frame(observations=100)
+        news = [item(days[2], -0.9, url=f"n{i}", event="regulatory") for i in range(6)]
+        table = build_daily_table(long_frame, aggregate_by_day(news), days[0], days[-1])
+        incidents = rank_incidents(table, long_frame, return_threshold=1.5)
+        assert {i.day for i in incidents} == {days[2]}
+
+        short_frame, days = self._frame(observations=7)
+        table_short = build_daily_table(short_frame, aggregate_by_day(news), days[0], days[-1])
+        short_incidents = rank_incidents(table_short, short_frame, return_threshold=1.5)
+        assert short_incidents == []
+
+    def test_flagging_diagnostics_applies_the_same_adjustment(self):
+        """flagging_diagnostics() must bucket days consistently with
+        rank_incidents() - both read the same effective threshold off the
+        frame's ar_scale_df, not two independently-drifting z cutoffs."""
+        news_days_frame, days = self._frame(observations=100)
+        news = [item(days[2], -0.9, url=f"n{i}", event="regulatory") for i in range(6)]
+        table = build_daily_table(news_days_frame, aggregate_by_day(news), days[0], days[-1])
+        diag = flagging_diagnostics(table, return_threshold=1.5, frame=news_days_frame)
+        assert diag["candidates"] == 1
+
+        short_frame, days = self._frame(observations=7)
+        table_short = build_daily_table(short_frame, aggregate_by_day(news), days[0], days[-1])
+        diag_short = flagging_diagnostics(table_short, return_threshold=1.5, frame=short_frame)
+        assert diag_short["candidates"] == 0
+
+
 class TestFlaggingDiagnostics:
     """Every trading day, bucketed by which of the two flagging bars it
     cleared - the source of the report's "why the rest were dropped" text.

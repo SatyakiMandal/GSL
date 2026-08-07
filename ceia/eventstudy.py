@@ -32,7 +32,12 @@ import pandas as pd
 from .dedupe import cluster_sizes
 from .emotion import valence_of
 from .models import NewsItem
-from .returns import DEFAULT_PERMUTATIONS, cumulative_abnormal_return, permutation_test_car
+from .returns import (
+    DEFAULT_PERMUTATIONS,
+    cumulative_abnormal_return,
+    permutation_test_car,
+    t_equivalent_threshold,
+)
 
 log = logging.getLogger(__name__)
 
@@ -258,6 +263,15 @@ def rank_incidents(
     days_with_news = int((table["unique_count"] > 0).sum())
     thin_baseline = days_with_news < MIN_DAYS_FOR_BASELINE
 
+    # A short estimation window makes its residual-SD estimate less certain,
+    # which a flat z threshold silently ignores - widen the effective bar by
+    # exactly as much as a t-distribution says that uncertainty costs (see
+    # returns.t_equivalent_threshold()). Falls back to return_threshold
+    # unchanged when no estimation-window df is available (frame.attrs is
+    # empty, e.g. in a test that builds the frame directly).
+    effective_return_threshold = t_equivalent_threshold(
+        return_threshold, frame.attrs.get("ar_scale_df", 0))
+
     def _is_candidate(row) -> bool:
         if row["unique_count"] == 0:
             return False
@@ -266,7 +280,7 @@ def rank_incidents(
         else:
             coverage_unusual = (row["coverage_z"] >= coverage_threshold
                                 or abs(row["sentiment_z"]) >= coverage_threshold)
-        return_unusual = abs(row["abnormal_return_z"]) >= return_threshold
+        return_unusual = abs(row["abnormal_return_z"]) >= effective_return_threshold
         return coverage_unusual and return_unusual
 
     # Computed up front so the permutation test below can exclude *every*
@@ -327,6 +341,7 @@ def flagging_diagnostics(
     table: pd.DataFrame,
     coverage_threshold: float = DEFAULT_COVERAGE_Z,
     return_threshold: float = DEFAULT_RETURN_Z,
+    frame: pd.DataFrame | None = None,
 ) -> dict:
     """Why the few candidate days were kept and the rest were not.
 
@@ -350,12 +365,17 @@ def flagging_diagnostics(
     days_with_news = int((table["unique_count"] > 0).sum())
     thin_baseline = days_with_news < MIN_DAYS_FOR_BASELINE
 
+    # Same t-distribution widening rank_incidents() applies - see its
+    # comment. Falls back to the raw threshold when no frame is given.
+    effective_return_threshold = t_equivalent_threshold(
+        return_threshold, frame.attrs.get("ar_scale_df", 0) if frame is not None else 0)
+
     candidates = coverage_only = return_only = routine = 0
     no_coverage_quiet = no_coverage_big_move = 0
 
     for _, row in table.iterrows():
         has_news = row["unique_count"] > 0
-        return_unusual = abs(row["abnormal_return_z"]) >= return_threshold
+        return_unusual = abs(row["abnormal_return_z"]) >= effective_return_threshold
         if not has_news:
             if return_unusual:
                 no_coverage_big_move += 1
