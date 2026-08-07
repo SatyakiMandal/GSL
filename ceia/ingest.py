@@ -376,6 +376,7 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
         skip_sentiment: bool = False,
         skip_emotion: bool = False,
         skip_alias_widening: bool = False,
+        skip_slug_prefilter: bool = False,
         max_workers: int = 8,
         wayback_fetcher: Fetcher | None = None) -> IngestResult:
     fetcher = fetcher or Fetcher()
@@ -426,10 +427,23 @@ def run(config: RunConfig, fetcher: Fetcher | None = None,
     log.info("discovered %d candidate URLs", len(candidates))
 
     token_groups = _slug_token_groups(aliases, config.ticker)
-    narrowed = interleave(prefilter(candidates, token_groups, PREFILTER_SKIP_THRESHOLD))
-    log.info("pre-filtered to %d URLs on slug groups %s (sources under %d "
-             "candidates fetched in full, not slug-guessed)",
-             len(narrowed), [sorted(g) for g in token_groups], PREFILTER_SKIP_THRESHOLD)
+    if skip_slug_prefilter:
+        # Every candidate goes to the real, text-based relevance scorer -
+        # no URL-slug guess anywhere, regardless of a source's volume this
+        # run. Slower and far more requests on a high-volume source (a
+        # month of Economic Times alone is ~13,000 URLs), but it is the
+        # only way to catch a story whose slug never names the company at
+        # all - the accepted, disclosed cost prefilter()'s docstring already
+        # names for a source too large to fetch whole.
+        narrowed = interleave(candidates)
+        log.info("slug pre-filter skipped entirely (--skip-slug-prefilter): "
+                 "%d candidate(s) all going to full-text relevance scoring",
+                 len(narrowed))
+    else:
+        narrowed = interleave(prefilter(candidates, token_groups, PREFILTER_SKIP_THRESHOLD))
+        log.info("pre-filtered to %d URLs on slug groups %s (sources under %d "
+                 "candidates fetched in full, not slug-guessed)",
+                 len(narrowed), [sorted(g) for g in token_groups], PREFILTER_SKIP_THRESHOLD)
 
     if limit is not None and len(narrowed) > limit:
         narrowed = cap_across_range(narrowed, limit)
@@ -532,6 +546,18 @@ def main() -> None:
                              "extra alias (see widen_aliases()). On by "
                              "default; costs one extra ticker-search "
                              "request per run.")
+    parser.add_argument("--skip-slug-prefilter", action="store_true",
+                        help="Never use the URL-slug guess to narrow "
+                             "candidates before fetching, regardless of a "
+                             "source's volume this run - every candidate "
+                             "from every source goes straight to full-text "
+                             "relevance scoring instead. Catches a story "
+                             "whose slug never names the company at all, at "
+                             "the cost of far more fetches on a high-volume "
+                             "source (a month of Economic Times alone is "
+                             "~13,000 URLs). Off by default; the slug guess "
+                             "already skips itself per-source below "
+                             "PREFILTER_SKIP_THRESHOLD candidates.")
     parser.add_argument("--cache-dir", default="cache")
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     parser.add_argument("--min-interval", type=float, default=2.0)
@@ -572,6 +598,7 @@ def main() -> None:
                  skip_sentiment=args.skip_sentiment,
                  skip_emotion=args.skip_emotion,
                  skip_alias_widening=args.skip_alias_widening,
+                 skip_slug_prefilter=args.skip_slug_prefilter,
                  max_workers=args.workers)
 
     out_path = Path(args.out)

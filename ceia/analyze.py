@@ -496,6 +496,15 @@ def main() -> None:
                              "leading word as an extra alias (see "
                              "ceia.ingest.widen_aliases()). On by default; "
                              "costs one extra ticker-search request per run.")
+    parser.add_argument("--skip-slug-prefilter", action="store_true",
+                        help="Live scraping only. Never use the URL-slug "
+                             "guess to narrow candidates before fetching, "
+                             "regardless of a source's volume this run - "
+                             "every candidate from every source goes "
+                             "straight to full-text relevance scoring "
+                             "instead. Catches a story whose slug never "
+                             "names the company at all, at the cost of far "
+                             "more fetches on a high-volume source.")
     parser.add_argument("--skip-macro-prices", action="store_true",
                         help="Don't fetch Brent crude, the G-Sec yield, or "
                              "the fiscal deficit for the macro-economic "
@@ -565,7 +574,8 @@ def main() -> None:
         fetcher = Fetcher(cache_dir=args.cache_dir, user_agent=args.user_agent)
         ingested: IngestResult = run_ingest(config, fetcher=fetcher, limit=args.limit,
                                             max_workers=args.workers,
-                                            skip_alias_widening=args.skip_alias_widening)
+                                            skip_alias_widening=args.skip_alias_widening,
+                                            skip_slug_prefilter=args.skip_slug_prefilter)
         items, news_meta = ingested.items, ingested.to_dict()
         news_meta.pop("items", None)
 

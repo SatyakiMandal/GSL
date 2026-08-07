@@ -377,6 +377,19 @@ any realistic run, so they benefit automatically — as would any other
 low-volume source added later, or any high-volume source queried over a
 narrow enough window, with no source list to maintain.
 
+**A manual override for the rest: `--skip-slug-prefilter`.** The
+volume-adaptive rule above only skips the slug guess *automatically*, for a
+source under the threshold. A high-volume source over it (Economic Times,
+Moneycontrol) still gets slug-filtered by default, which still risks the
+same class of miss the fix above targets — a real story whose URL slug
+never happens to spell the company's name out. `--skip-slug-prefilter`
+(both `ceia.ingest` and `ceia.analyze`) forces every candidate from every
+source straight to full-text relevance scoring, no URL guess anywhere,
+regardless of that source's volume this run. Slower and far more fetches on
+a high-volume source (a month of Economic Times alone is ~13,000 URLs), so
+it is opt-in rather than the default — for a run where recall matters more
+than runtime.
+
 **Round-robin across sources.** Candidates are interleaved before `--limit`
 applies, so a capped run samples every source instead of spending its whole
 budget on whichever ran first.

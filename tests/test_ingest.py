@@ -547,3 +547,51 @@ class TestRunWaybackWiring:
         run(config, fetcher=main_fetcher, wayback_fetcher=wb_fetcher,
             skip_sentiment=True, skip_emotion=True, skip_alias_widening=True)
         assert wb_fetcher.calls == []
+
+
+class TestSkipSlugPrefilter:
+    """--skip-slug-prefilter: every candidate goes to full-text relevance
+    scoring, no URL-slug guess anywhere - see ingest.run()'s docstring for
+    why (a story whose slug never names the company would otherwise be
+    dropped before it was ever fetched, let alone read)."""
+
+    MATCHING_URL = "https://economictimes.example/adani-group-news.html"
+    NON_MATCHING_URL = "https://economictimes.example/unrelated-story.html"
+
+    def _run(self, monkeypatch, tmp_path, skip_slug_prefilter: bool):
+        import ceia.ingest as ingest_mod
+
+        candidates = [
+            Candidate(self.MATCHING_URL, "economic_times", None),
+            Candidate(self.NON_MATCHING_URL, "economic_times", None),
+        ]
+        monkeypatch.setattr(
+            ingest_mod, "discover",
+            lambda fetcher, sources, start, end: (candidates, {"economic_times": "ok"}))
+        # A real per-source threshold this low forces prefilter() to
+        # actually slug-filter with only 2 candidates, rather than the
+        # existing volume-adaptive skip (PREFILTER_SKIP_THRESHOLD=5000)
+        # doing it for free and masking what --skip-slug-prefilter changes.
+        monkeypatch.setattr(ingest_mod, "PREFILTER_SKIP_THRESHOLD", 0)
+
+        html = _adani_article_html()
+        fetcher = _FakeMainFetcher(tmp_path, responses={
+            self.MATCHING_URL: _FakeResp(html),
+            self.NON_MATCHING_URL: _FakeResp(html),
+        })
+        config = RunConfig(company="Adani Group", ticker="ADANIENT.NS",
+                           start=date(2023, 1, 20), end=date(2023, 1, 27),
+                           min_relevance=0.1)
+        run(config, fetcher=fetcher, skip_sentiment=True, skip_emotion=True,
+            skip_alias_widening=True, skip_slug_prefilter=skip_slug_prefilter)
+        return fetcher
+
+    def test_flag_off_drops_the_non_matching_slug_before_fetching(self, monkeypatch, tmp_path):
+        fetcher = self._run(monkeypatch, tmp_path, skip_slug_prefilter=False)
+        assert self.MATCHING_URL in fetcher.calls
+        assert self.NON_MATCHING_URL not in fetcher.calls
+
+    def test_flag_on_fetches_every_candidate_regardless_of_slug(self, monkeypatch, tmp_path):
+        fetcher = self._run(monkeypatch, tmp_path, skip_slug_prefilter=True)
+        assert self.MATCHING_URL in fetcher.calls
+        assert self.NON_MATCHING_URL in fetcher.calls
