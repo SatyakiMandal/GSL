@@ -1430,6 +1430,68 @@ here and never used for any publisher's own origin, so this decision stays
 local and visible rather than loosening the shared default every other
 source is still held to.
 
+## Phase 9 — financial fundamentals (revenue, operating expense, NOPAT, order book)
+
+A second professor's note, after the news/price event-study work was
+already built: also show the company's **order book, financial reporting,
+revenue growth, operating expense, and NOPAT** (Net Operating Profit After
+Tax). Confirmed with the user before building — descriptive backdrop, the
+same role the macro-economic and Nifty sections already play, never tied to
+candidate-day flagging or any significance test.
+
+**Source: screener.in**, checked directly first. `robots.txt` is fully
+permissive (`User-agent: *` disallows only a handful of unrelated
+query-string paths, no AI-agent block of any kind), and a company page is
+real, server-rendered HTML with a genuine, dated quarterly-results table —
+verified against two real companies with deliberately different
+financial-statement shapes:
+
+- **IndusInd Bank** (a bank): the table uses "Revenue" for top-line income
+  and "Financing Profit" in place of a conventional operating-profit line —
+  banks don't report sales of goods or an operating profit the way a
+  manufacturer does.
+- **Larsen & Toubro** (industrial/EPC): the table uses "Sales" and
+  "Operating Profit" instead.
+
+So `ceia/financials.py` tries each known label alternative in turn and
+records which one it actually used, rather than hardcoding a single label
+that would silently return nothing for half of all companies. NOPAT is
+computed as `operating income × (1 − tax rate)`, both from the same latest
+reported quarter, using whichever operating-income row was found — a
+classic textbook EBIT-based figure, deliberately *not* derived from
+"Profit before tax" (which is already net of interest expense, and would
+smuggle a company's financing structure into a number meant to strip it out).
+
+### Order Book: genuinely unavailable for free, confirmed directly
+
+The first assumption — "Order Book only applies to some sectors" — turned
+out to be half right. It's true for a bank (IndusInd Bank's page has no
+Order Book row anywhere, including screener's separate per-company
+"Insights" panel that carries sector-specific KPIs like loan book or branch
+count). But checking L&T — an EPC company that plausibly discloses one —
+found the row exists but renders with **no values at all**; the
+surrounding data block is explicitly marked `Requires Premium`. So Order
+Book is not freely available from this source **for any company**, not
+just a sector mismatch for some. Both facts are kept distinct in the
+report rather than collapsed into one generic "unavailable": a bank shows
+*"not applicable"*, an EPC company (or anyone else screener tracks it for)
+shows *"not available: Premium-gated"* — different facts about the world,
+disclosed as what they actually are, the same practice this project uses
+for every other checked-and-rejected source (see `ceia.macro.NOT_AVAILABLE_INDICATORS`).
+
+### How it's shown
+
+A new "Financial fundamentals" report section (listed reports only, same as
+Nifty — the unlisted report keeps its own narrower vocabulary): revenue and
+operating expense with QoQ/YoY change where enough quarters of history are
+available, NOPAT (or the specific reason it could not be computed — no
+operating-income row found, or no tax-rate figure for the latest quarter),
+and order book (its real value where available, otherwise the specific
+disclosed reason). Always the **latest reported quarter**, not a value
+scoped to the report's own date window — labelled with its actual date and
+a link back to the screener.in page it came from, so a reader can verify it
+directly. `--skip-financials` skips the fetch entirely.
+
 ## Reusing the collected corpus
 
 `data/adani_wide_2023.json` holds the 137-item Adani corpus from the validation

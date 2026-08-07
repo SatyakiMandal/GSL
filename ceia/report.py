@@ -272,6 +272,69 @@ specific day, not just its raw return's sign.</p>
 """
 
 
+def _financials_row_stat(key: str, row: dict | None) -> str:
+    if not row:
+        return _stat(key, "unavailable")
+    parts = [f"{row['latest']:,.0f}"]
+    if row.get("qoq_change") is not None:
+        parts.append(f"{row['qoq_change'] * 100:+.1f}% QoQ")
+    if row.get("yoy_change") is not None:
+        parts.append(f"{row['yoy_change'] * 100:+.1f}% YoY")
+    return _stat(f"{key} ({escape(row['label'])})", " · ".join(parts))
+
+
+def _financials_section(financials: dict) -> str:
+    """Revenue growth, operating expense, NOPAT and order book (professor's
+    note, added after the news/price event-study work) - descriptive
+    backdrop only, like the macro-economic and Nifty sections above, never
+    tied to candidate-day flagging or any significance test. Always the
+    latest reported quarter, not a value scoped to this report's own
+    window - see ``ceia/financials.py``'s module docstring for the
+    screener.in source, and why "which row means what" is sector-dependent
+    (a bank's page uses different labels than an industrial company's) and
+    why Order Book is disclosed as unavailable for most companies rather
+    than silently omitted.
+    """
+    if not financials:
+        return ""
+    if financials.get("note"):
+        return (
+            "<h2>Financial fundamentals</h2>"
+            f'<p class="empty">{escape(financials["note"])}</p>'
+        )
+
+    revenue_stat = _financials_row_stat("Revenue", financials.get("revenue"))
+    expense_stat = _financials_row_stat("Operating expense", financials.get("expenses"))
+
+    if financials.get("nopat") is not None:
+        nopat_stat = _stat(
+            "NOPAT", f"{financials['nopat']:,.0f} {escape(financials['currency_unit'])}")
+    else:
+        nopat_stat = _stat("NOPAT", escape(financials.get("nopat_note") or "not computed"))
+
+    order_book = financials.get("order_book")
+    if order_book:
+        order_book_stat = _stat(
+            "Order book", f"{order_book['latest']:,.0f} {escape(financials['currency_unit'])}")
+    else:
+        order_book_stat = _stat(
+            "Order book", escape(financials.get("order_book_note") or "unavailable"))
+
+    return f"""
+<h2>Financial fundamentals</h2>
+<p>Latest reported quarter ({escape(str(financials.get("as_of") or "?"))},
+{escape(financials["statement_kind"])} figures, {escape(financials["currency_unit"])}) from
+<a href="{escape(financials["screener_url"])}" target="_blank" rel="noopener">screener.in</a> —
+context alongside the price/news analysis above, never scoped to this
+report's own date window and never part of candidate-day flagging. NOPAT is
+computed as operating income × (1 − tax rate), both from the same latest
+quarter — which row counts as "operating income" is sector-dependent (a
+bank's page uses a different label than an industrial company's), named
+alongside the figure below.</p>
+<div class="grid">{revenue_stat}{expense_stat}{nopat_stat}{order_book_stat}</div>
+"""
+
+
 def _volume_cell(row: pd.Series) -> str:
     volume = row.get("volume")
     if volume is None or pd.isna(volume):
@@ -561,6 +624,7 @@ Hover any bar or marker for its exact date and value.</p>
 {timeline_svg(daily, incident_days, config.company, config.benchmark, incidents=incidents, macro_events=macro_events)}
 {_macro_section(getattr(analysis, "macro", {}) or {})}
 {_nifty_section(getattr(analysis, "nifty_indices", {}) or {}, incidents, daily, config.ticker)}
+{_financials_section(getattr(analysis, "financials", {}) or {})}
 
 <h2>Candidate incident days</h2>
 <p>Ranked by the combination of an unusual abnormal return and notable coverage.

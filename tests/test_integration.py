@@ -29,6 +29,7 @@ from ceia.analyze import analyse  # noqa: E402
 from ceia.extract import parse_article  # noqa: E402
 from ceia.models import NewsItem, RunConfig  # noqa: E402
 from ceia.macro import SkippedFetcher  # noqa: E402
+from ceia.financials import SkippedFinancialsFetcher  # noqa: E402
 from ceia.prices import CsvProvider  # noqa: E402
 from ceia.report import build_html  # noqa: E402
 
@@ -149,7 +150,8 @@ def run_pipeline(price_dir: Path, start=date(2023, 1, 20), end=date(2023, 2, 3),
                        providers=[CsvProvider(price_dir)], return_threshold=1.5,
                        macro_provider=CsvProvider(price_dir),
                        macro_fetcher=SkippedFetcher(),
-                       skip_nifty_indices=skip_nifty)
+                       skip_nifty_indices=skip_nifty,
+                       financials_fetcher=SkippedFinancialsFetcher())
     return analysis, kept, dropped
 
 
@@ -393,6 +395,7 @@ class TestDegradation:
                            aliases=["Testco Ltd"])
         analysis = analyse(config, [orphan], {}, providers=[CsvProvider(prices)],
                           macro_provider=CsvProvider(prices),
-                          macro_fetcher=SkippedFetcher())
+                          macro_fetcher=SkippedFetcher(),
+                          financials_fetcher=SkippedFinancialsFetcher())
         assert len(analysis.unattributed) == 1
         assert "could not be placed on a trading day" in build_html(analysis)

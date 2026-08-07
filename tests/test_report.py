@@ -71,10 +71,12 @@ class FakeAnalysis:
     macro_events: list = field(default_factory=list)
     macro: dict = field(default_factory=dict)
     nifty_indices: dict = field(default_factory=dict)
+    financials: dict = field(default_factory=dict)
 
 
 def make_analysis(incidents=None, unattributed=None, daily=None,
-                  macro_events=None, macro=None, nifty_indices=None) -> FakeAnalysis:
+                  macro_events=None, macro=None, nifty_indices=None,
+                  financials=None) -> FakeAnalysis:
     days = pd.to_datetime(["2023-01-24", "2023-01-25", "2023-01-27"])
     frame = daily if daily is not None else pd.DataFrame({
         "close": [3400.0, 2930.0, 2400.0],
@@ -112,6 +114,7 @@ def make_analysis(incidents=None, unattributed=None, daily=None,
         macro_events=macro_events or [],
         macro=macro or {},
         nifty_indices=nifty_indices or {},
+        financials=financials or {},
     )
 
 
@@ -659,6 +662,85 @@ class TestIndexBreakdownTable:
     def test_not_shown_when_no_nifty_indices_at_all(self):
         html = build_html(make_analysis(incidents=[make_incident()]))
         assert "How the Nifty indices moved on this same day" not in html
+
+
+class TestFinancialsSection:
+    """The professor's note (revenue growth, operating expense, NOPAT,
+    order book) - descriptive backdrop, like macro/Nifty above it."""
+
+    def test_no_financials_data_renders_no_section(self):
+        html = build_html(make_analysis())
+        assert "<h2>Financial fundamentals</h2>" not in html
+
+    def test_total_failure_shows_the_disclosed_note(self):
+        financials = {"note": "unavailable: could not load financials for X.NS: HTTP 404"}
+        html = build_html(make_analysis(financials=financials))
+        assert "<h2>Financial fundamentals</h2>" in html
+        assert "could not load financials for X.NS" in html
+
+    def test_revenue_and_expense_shown_with_qoq_and_yoy(self):
+        financials = {
+            "note": "", "as_of": "2025-12-31", "statement_kind": "consolidated",
+            "currency_unit": "Rs. Crores",
+            "screener_url": "https://www.screener.in/company/INDUSINDBK/consolidated/",
+            "revenue": {"label": "Revenue", "latest": 11373.0,
+                       "qoq_change": -0.0203, "yoy_change": -0.1116},
+            "expenses": {"label": "Expenses", "latest": 5082.0,
+                        "qoq_change": None, "yoy_change": None},
+            "operating_income": {"label": "Financing Profit", "latest": -397.0,
+                                 "qoq_change": None, "yoy_change": None},
+            "tax_rate_pct": 25.0, "nopat": -297.75,
+            "nopat_note": "Financing Profit × (1 - Tax % / 100), both from the "
+                          "latest reported quarter",
+            "order_book": None, "order_book_note": "not applicable: banks do not "
+                                                    "report an order book.",
+        }
+        html = build_html(make_analysis(financials=financials))
+        assert "Revenue (Revenue)" in html
+        assert "11,373" in html
+        assert "-2.0% QoQ" in html
+        assert "-11.2% YoY" in html
+        assert "Operating expense (Expenses)" in html
+        assert "5,082" in html
+        assert "-298" in html or "-297.75" in html.replace(",", "")  # NOPAT rendered
+        assert "not applicable: banks do not report an order book" in html
+
+    def test_nopat_not_computed_shows_the_reason(self):
+        financials = {
+            "note": "", "as_of": "2025-12-31", "statement_kind": "consolidated",
+            "currency_unit": "Rs. Crores", "screener_url": "https://x",
+            "revenue": None, "expenses": None, "operating_income": None,
+            "tax_rate_pct": None, "nopat": None,
+            "nopat_note": "tax rate not available for the latest quarter",
+            "order_book": None, "order_book_note": "not applicable",
+        }
+        html = build_html(make_analysis(financials=financials))
+        assert "tax rate not available for the latest quarter" in html
+
+    def test_order_book_with_real_values_is_shown(self):
+        financials = {
+            "note": "", "as_of": "2026-06-30", "statement_kind": "consolidated",
+            "currency_unit": "Rs. Crores", "screener_url": "https://x",
+            "revenue": None, "expenses": None, "operating_income": None,
+            "tax_rate_pct": None, "nopat": None, "nopat_note": "",
+            "order_book": {"label": "Order Book", "latest": 450000.0,
+                          "qoq_change": None, "yoy_change": None},
+            "order_book_note": "",
+        }
+        html = build_html(make_analysis(financials=financials))
+        assert "450,000" in html
+
+    def test_currency_unit_is_escaped(self):
+        financials = {
+            "note": "", "as_of": "2025-12-31", "statement_kind": "consolidated",
+            "currency_unit": "<script>evil</script>", "screener_url": "https://x",
+            "revenue": None, "expenses": None, "operating_income": None,
+            "tax_rate_pct": None, "nopat": None, "nopat_note": "",
+            "order_book": None, "order_book_note": "",
+        }
+        html = build_html(make_analysis(financials=financials))
+        assert "<script>evil</script>" not in html
+        assert "&lt;script&gt;evil" in html
 
 
 class TestTimestampIndexHandling:

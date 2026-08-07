@@ -25,6 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import align, eventstudy, returns
+from . import financials as financials_mod
 from . import macro as macro_mod
 from . import nifty as nifty_mod
 from .fetcher import DEFAULT_USER_AGENT, Fetcher
@@ -61,6 +62,7 @@ class Analysis:
     macro_events: list = field(default_factory=list)
     macro: dict = field(default_factory=dict)
     nifty_indices: dict = field(default_factory=dict)
+    financials: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         table = self.daily.reset_index()
@@ -100,6 +102,7 @@ class Analysis:
             "flagging_diagnostics": self.diagnostics,
             "macro": self.macro,
             "nifty_indices": nifty,
+            "financials": self.financials,
             "unattributed_items": [
                 {"url": i.url, "source": i.source, "headline": i.headline,
                  "reason": i.timestamp_confidence}
@@ -138,6 +141,8 @@ def analyse(
     macro_provider: PriceProvider | None = None,
     macro_fetcher=None,
     skip_nifty_indices: bool = False,
+    financials_fetcher=None,
+    skip_financials: bool = False,
 ) -> Analysis:
     frame, model, price_meta = returns.build(
         config.ticker, config.benchmark, config.start, config.end,
@@ -228,6 +233,10 @@ def analyse(
                          permutations=permutations,
                      ))
 
+    financials = ({} if skip_financials else
+                 financials_mod.financials_summary(
+                     config.ticker, fetcher=financials_fetcher))
+
     return Analysis(
         config=config,
         daily=table,
@@ -246,6 +255,7 @@ def analyse(
         macro_events=macro_events,
         macro=macro_summary,
         nifty_indices=nifty_indices,
+        financials=financials,
     )
 
 
@@ -321,6 +331,33 @@ def _print(analysis: Analysis) -> None:
                         f"{agreement['n']} candidate day(s)" if agreement["n"] else "")
             print(f"   {name:<12} {index.window_return * 100:+.2f}% over the window"
                   f"{agree_str}")
+
+    fin = analysis.financials
+    if fin:
+        if fin.get("note"):
+            print(f"Financials: {fin['note']}")
+        else:
+            print(f"Financials (latest reported quarter, {fin.get('as_of', '?')}, "
+                  f"{fin.get('currency_unit', '')}, {fin['statement_kind']} — "
+                  f"{fin['screener_url']}):")
+            rev = fin.get("revenue")
+            if rev:
+                qoq = f"{rev['qoq_change'] * 100:+.1f}% QoQ" if rev["qoq_change"] is not None else ""
+                yoy = f"{rev['yoy_change'] * 100:+.1f}% YoY" if rev["yoy_change"] is not None else ""
+                print(f"   {rev['label']}: {rev['latest']:,.0f}"
+                      + (f" ({', '.join(p for p in (qoq, yoy) if p)})" if qoq or yoy else ""))
+            exp = fin.get("expenses")
+            if exp:
+                print(f"   Expenses: {exp['latest']:,.0f}")
+            if fin.get("nopat") is not None:
+                print(f"   NOPAT: {fin['nopat']:,.0f} ({fin['nopat_note']})")
+            else:
+                print(f"   NOPAT: not computed — {fin['nopat_note']}")
+            ob = fin.get("order_book")
+            if ob:
+                print(f"   Order Book: {ob['latest']:,.0f}")
+            else:
+                print(f"   Order Book: {fin['order_book_note']}")
 
     if analysis.daily.empty:
         print("\nNo trading days in the analysis window.")
@@ -472,6 +509,10 @@ def main() -> None:
                              "lead-in price fetches and market-model fits "
                              "otherwise - useful if Yahoo is rate-limiting "
                              "this connection.")
+    parser.add_argument("--skip-financials", action="store_true",
+                        help="Don't fetch revenue/expense/NOPAT/order-book "
+                             "fundamentals from screener.in (see README "
+                             "Phase 9).")
     parser.add_argument("--price-csv", default=None,
                         help="Directory of <SYMBOL>.csv files; forces the CSV provider.")
     parser.add_argument("--api-key", default=None,
@@ -548,6 +589,7 @@ def main() -> None:
             providers=providers, permutations=args.permutations,
             macro_provider=macro_provider, macro_fetcher=macro_fetcher,
             skip_nifty_indices=args.skip_nifty_indices,
+            skip_financials=args.skip_financials,
         )
     except PriceError as exc:
         print(f"\nPrice data unavailable: {exc}")
