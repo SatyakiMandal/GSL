@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ceia.charts import timeline_svg  # noqa: E402
 from ceia.eventstudy import Incident  # noqa: E402
+from ceia.macro import MacroEvent  # noqa: E402
 from ceia.models import NewsItem, RunConfig  # noqa: E402
 from ceia.narrative import incident_narrative, summary_narrative  # noqa: E402
 from ceia.report import build_html  # noqa: E402
@@ -66,9 +67,12 @@ class FakeAnalysis:
     news_meta: dict
     caveats: list = field(default_factory=list)
     unattributed: list = field(default_factory=list)
+    macro_events: list = field(default_factory=list)
+    macro: dict = field(default_factory=dict)
 
 
-def make_analysis(incidents=None, unattributed=None, daily=None) -> FakeAnalysis:
+def make_analysis(incidents=None, unattributed=None, daily=None,
+                  macro_events=None, macro=None) -> FakeAnalysis:
     days = pd.to_datetime(["2023-01-24", "2023-01-25", "2023-01-27"])
     frame = daily if daily is not None else pd.DataFrame({
         "close": [3400.0, 2930.0, 2400.0],
@@ -103,6 +107,8 @@ def make_analysis(incidents=None, unattributed=None, daily=None) -> FakeAnalysis
         caveats=["This is a structured case study, not a statistically validated "
                  "causal finding."],
         unattributed=unattributed or [],
+        macro_events=macro_events or [],
+        macro=macro or {},
     )
 
 
@@ -451,6 +457,59 @@ class TestHtmlReport:
         html = build_html(make_analysis())
         body = html.split("<h2>Daily detail</h2>")[1]
         assert body.count("<tr") >= 3
+
+
+class TestMacroSection:
+    def test_no_macro_data_renders_no_section(self):
+        html = build_html(make_analysis())
+        assert "<h2>Macro-economic backdrop</h2>" not in html
+
+    def test_repo_rate_change_appears_in_the_table(self):
+        events = [MacroEvent(day=date(2023, 1, 25), indicator="repo_rate",
+                             label="RBI repo rate changed to 6.50%")]
+        macro = {"repo_rate_changes": [{"date": "2023-01-25",
+                                        "label": "RBI repo rate changed to 6.50%"}],
+                 "crude_oil": {}, "not_available": {}}
+        html = build_html(make_analysis(macro_events=events, macro=macro))
+        assert "<h2>Macro-economic backdrop</h2>" in html
+        assert "RBI repo rate changed to 6.50%" in html
+
+    def test_repo_rate_marker_appears_on_the_chart(self):
+        events = [MacroEvent(day=date(2023, 1, 25), indicator="repo_rate",
+                             label="RBI repo rate changed to 6.50%")]
+        macro = {"repo_rate_changes": [{"date": "2023-01-25",
+                                        "label": "RBI repo rate changed to 6.50%"}],
+                 "crude_oil": {}, "not_available": {}}
+        html = build_html(make_analysis(macro_events=events, macro=macro))
+        assert "macro-marker" in html
+
+    def test_crude_oil_change_is_shown(self):
+        macro = {"repo_rate_changes": [], "not_available": {},
+                 "crude_oil": {"start_date": "2023-01-24", "end_date": "2023-01-28",
+                              "start_price": 80.0, "end_price": 84.0, "change": 0.05}}
+        html = build_html(make_analysis(macro=macro))
+        assert "+5.00%" in html
+
+    def test_crude_oil_failure_is_disclosed_not_hidden(self):
+        macro = {"repo_rate_changes": [], "not_available": {},
+                 "crude_oil": {"note": "crude oil price unavailable: BZ=F: HTTP 429"}}
+        html = build_html(make_analysis(macro=macro))
+        assert "crude oil price unavailable" in html
+
+    def test_not_available_indicators_are_disclosed(self):
+        macro = {"repo_rate_changes": [], "crude_oil": {},
+                 "not_available": {"GDP growth": "MOSPI is a client-rendered app."}}
+        html = build_html(make_analysis(macro=macro))
+        assert "GDP growth" in html
+        assert "MOSPI is a client-rendered app." in html
+
+    def test_macro_label_is_escaped(self):
+        macro = {"crude_oil": {}, "not_available": {},
+                 "repo_rate_changes": [{"date": "2023-01-25",
+                                        "label": "<script>evil</script>"}]}
+        html = build_html(make_analysis(macro=macro))
+        assert "<script>evil</script>" not in html
+        assert "&lt;script&gt;evil" in html
 
 
 class TestTimestampIndexHandling:

@@ -27,10 +27,10 @@ from .unlisted_narrative import move_narrative, unlisted_summary_narrative
 CSS = """
 :root{--bg:#fbfbfa;--fg:#1c1b19;--muted:#6b6862;--line:#e3e1dc;--card:#fff;
 --accent:#1a56a8;--bench:#9a958c;--pos:#1f7a4d;--neg:#b3261e;--warn-bg:#fdf6e3;
---warn-br:#d9a441;--plot:#f5f4f1;}
+--warn-br:#d9a441;--plot:#f5f4f1;--macro:#7a4fb5;}
 @media (prefers-color-scheme:dark){:root{--bg:#16151a;--fg:#e9e7e2;--muted:#9e9a92;
 --line:#33313a;--card:#1e1d23;--accent:#7fb0f0;--bench:#7d7970;--pos:#5cc48d;
---neg:#f2837a;--warn-bg:#2b2416;--warn-br:#a8802f;--plot:#212027;}}
+--neg:#f2837a;--warn-bg:#2b2416;--warn-br:#a8802f;--plot:#212027;--macro:#b79aef;}}
 *{box-sizing:border-box}
 body{margin:0;padding:0;background:var(--bg);color:var(--fg);
 font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
@@ -78,6 +78,7 @@ stroke-linejoin:round;stroke-linecap:round}
 .badge-date-bg{fill:var(--plot);opacity:.88}
 .badge-date{fill:var(--warn-br);font-size:9px;font-weight:700;font-family:inherit}
 .real-point{fill:var(--accent);stroke:var(--card);stroke-width:1}
+.macro-marker path{fill:var(--macro);stroke:var(--card);stroke-width:1}
 .chart-caption{fill:var(--muted);font-size:10.5px;font-style:italic}
 .bar-pos{fill:var(--pos)}.bar-neg{fill:var(--neg)}
 .bar-incident{stroke:var(--warn-br);stroke-width:1.4}
@@ -141,6 +142,64 @@ def _pct(value: float, digits: int = 2) -> str:
 
 def _stat(key: str, value: str) -> str:
     return f'<div class="stat"><div class="k">{escape(key)}</div><div class="v">{value}</div></div>'
+
+
+def _macro_section(macro: dict) -> str:
+    """RBI repo rate changes and Brent crude across the window, plus the
+    disclosed list of indicators checked and not yet available (GDP, CPI
+    inflation, IIP, fiscal deficit, the 10-year G-Sec yield) - see
+    ``ceia/macro.py``'s module docstring for why each one specifically.
+    Context alongside the analysis above, never framed as having driven it.
+    """
+    if not macro:
+        return ""
+    events = macro.get("repo_rate_changes") or []
+    crude = macro.get("crude_oil") or {}
+    not_available = macro.get("not_available") or {}
+
+    if events:
+        rows = "".join(
+            f'<tr><td>{escape(e["date"])}</td>'
+            f'<td class="txt">{escape(e["label"])}</td></tr>'
+            for e in events
+        )
+        events_block = (
+            '<div class="scroll"><table><thead><tr><th>Date</th>'
+            '<th class="txt">Repo rate change</th></tr></thead><tbody>'
+            + rows + "</tbody></table></div>"
+        )
+    else:
+        events_block = '<p class="empty">No RBI repo rate change in this window.</p>'
+
+    if crude.get("change") is not None:
+        crude_stat = _stat(
+            "Brent crude",
+            f'{_pct(crude["change"])} (${crude["start_price"]:,.2f} '
+            f'→ ${crude["end_price"]:,.2f})',
+        )
+    else:
+        crude_stat = _stat("Brent crude", escape(crude.get("note") or "unavailable"))
+
+    gaps_block = ""
+    if not_available:
+        items = "".join(
+            f"<li><strong>{escape(k)}</strong>: {escape(v)}</li>"
+            for k, v in not_available.items()
+        )
+        gaps_block = (
+            '<p class="note">Checked and not included in this report, rather '
+            f"than silently omitted:</p><ul class=\"note\">{items}</ul>"
+        )
+
+    return f"""
+<h2>Macro-economic backdrop</h2>
+<p>RBI repo rate changes in this window (also marked on the timeline above as
+small diamonds), and Brent crude's move across it — context alongside the
+price action above, not a claim that either one drove it.</p>
+<div class="grid">{crude_stat}</div>
+{events_block}
+{gaps_block}
+"""
 
 
 def _volume_cell(row: pd.Series) -> str:
@@ -304,6 +363,7 @@ def build_html(analysis) -> str:
 
     diagnostics = getattr(analysis, "diagnostics", {}) or {}
     robustness = getattr(analysis, "robustness", {}) or {}
+    macro_events = getattr(analysis, "macro_events", []) or []
     weak_scale = "analysis-window" in str(price.get("ar_scale_source", ""))
 
     summary = "".join(
@@ -376,9 +436,12 @@ company's move once the market's move that day is removed. The bottom panel show
 many distinct news items were attributed to each trading day, coloured by tone (a
 hatched fill marks negative-tone bars as a colour-independent cue). Dashed vertical
 lines and numbered badges mark the ranked candidate incident days below — badge
-<strong>#1</strong> is the highest-ranked candidate, and so on. Hover any bar for its
-exact date and value.</p>
-{timeline_svg(daily, incident_days, config.company, config.benchmark, incidents=incidents)}
+<strong>#1</strong> is the highest-ranked candidate, and so on. Small diamonds
+along the bottom of the top panel mark RBI repo rate changes — economic
+context, not a candidate incident, so they are not numbered or ranked below.
+Hover any bar or marker for its exact date and value.</p>
+{timeline_svg(daily, incident_days, config.company, config.benchmark, incidents=incidents, macro_events=macro_events)}
+{_macro_section(getattr(analysis, "macro", {}) or {})}
 
 <h2>Candidate incident days</h2>
 <p>Ranked by the combination of an unusual abnormal return and notable coverage.
@@ -568,8 +631,10 @@ def build_unlisted_html(analysis) -> str:
 held flat between revisions, not observed daily. Small dots mark the dates the
 price was actually revised; everywhere else is a forward-filled display value,
 not a new observation. Dashed vertical lines and numbered badges mark the
-ranked price moves below.</p>
-{price_level_svg(analysis.series, real_dates, config.company, moves=ranked)}
+ranked price moves below. Small diamonds along the bottom mark RBI repo rate
+changes — economic context, not a price move, so not part of the ranking.</p>
+{price_level_svg(analysis.series, real_dates, config.company, moves=ranked, macro_events=getattr(analysis, "macro_events", []) or [])}
+{_macro_section(getattr(analysis, "macro", {}) or {})}
 
 <h2>News coverage</h2>
 <p>Every collected item's publication day, across the whole window — bar

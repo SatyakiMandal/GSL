@@ -38,6 +38,7 @@ import pandas as pd
 from .eventstudy import _excerpt
 from .fetcher import DEFAULT_USER_AGENT, Fetcher
 from .ingest import DEFAULT_SOURCES, IngestResult, run as run_ingest
+from . import macro as macro_mod
 from .models import NewsItem, RunConfig
 from .sources import UNLISTED_EXTRA_SOURCES
 
@@ -269,6 +270,8 @@ class UnlistedAnalysis:
     news_meta: dict
     unattributed: list[NewsItem] = field(default_factory=list)
     items: list[NewsItem] = field(default_factory=list)
+    macro_events: list = field(default_factory=list)
+    macro: dict = field(default_factory=dict)
 
     def ranked_moves(self, top_n: int | None = None) -> list[PriceMove]:
         ranked = sorted(self.moves, key=lambda m: -abs(m.change))
@@ -290,6 +293,7 @@ class UnlistedAnalysis:
                 for i in self.unattributed
             ],
             "series": json.loads(series.to_json(orient="records")),
+            "macro": self.macro,
         }
 
 
@@ -304,6 +308,7 @@ def analyse_unlisted(
     skip_sentiment: bool = False,
     skip_emotion: bool = False,
     max_workers: int = 8,
+    macro_provider=None,
 ) -> UnlistedAnalysis:
     """Wire the price-move computation to the existing news pipeline.
 
@@ -338,9 +343,12 @@ def analyse_unlisted(
     attach_news_to_moves(moves, items, limit=headline_limit)
     unattributed = [i for i in items if i.published_at is None]
 
+    macro_events = macro_mod.macro_events_in_window(config.start, config.end)
+    macro_summary = macro_mod.macro_summary(config.start, config.end, provider=macro_provider)
+
     return UnlistedAnalysis(config=config, url=url, series=series, moves=moves,
                             news_meta=news_meta or {}, unattributed=unattributed,
-                            items=items)
+                            items=items, macro_events=macro_events, macro=macro_summary)
 
 
 def main() -> None:
@@ -370,6 +378,12 @@ def main() -> None:
                              "listed-company sources plus entrackr, vccircle "
                              "and inc42, which cover the unlisted/pre-IPO "
                              "space the mainstream press mostly does not.")
+    parser.add_argument("--skip-macro-prices", action="store_true",
+                        help="Don't fetch Brent crude for the macro-economic "
+                             "backdrop section. Repo rate events (no network "
+                             "needed) still show either way. Useful if Yahoo "
+                             "is rate-limiting this connection - see the "
+                             "README's note on shared/proxied egress.")
     parser.add_argument("--cache-dir", default="cache")
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     parser.add_argument("--out", default="out/unlisted.json")
@@ -401,11 +415,12 @@ def main() -> None:
             raise SystemExit(2)
         print(f"Resolved UnlistedZone URL: {args.company!r} -> {url}")
 
+    macro_provider = macro_mod.SkippedPriceProvider() if args.skip_macro_prices else None
     try:
         analysis = analyse_unlisted(
             config, url, fetcher=fetcher, limit=args.limit,
             skip_sentiment=args.skip_sentiment, skip_emotion=args.skip_emotion,
-            max_workers=args.workers,
+            max_workers=args.workers, macro_provider=macro_provider,
         )
     except UnlistedPriceError as exc:
         print(f"\nPrice data unavailable: {exc}")

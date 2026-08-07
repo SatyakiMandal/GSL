@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ceia.extract import IST  # noqa: E402
 from ceia.charts import news_coverage_svg, price_level_svg  # noqa: E402
+from ceia.macro import MacroEvent  # noqa: E402
 from ceia.models import NewsItem, RunConfig  # noqa: E402
 from ceia.report import build_unlisted_html  # noqa: E402
 from ceia.unlisted import PriceMove  # noqa: E402
@@ -53,6 +54,8 @@ class FakeUnlistedAnalysis:
     news_meta: dict
     unattributed: list = field(default_factory=list)
     items: list = field(default_factory=list)
+    macro_events: list = field(default_factory=list)
+    macro: dict = field(default_factory=dict)
 
     def ranked_moves(self, top_n=None):
         ranked = sorted(self.moves, key=lambda m: -abs(m.change))
@@ -68,7 +71,8 @@ def _item(day, sentiment=0.0, *, headline="h", url="https://example.com/x") -> N
                     else "negative" if sentiment < -0.15 else "neutral")
 
 
-def make_analysis(moves=None, unattributed=None, items=None) -> FakeUnlistedAnalysis:
+def make_analysis(moves=None, unattributed=None, items=None,
+                  macro_events=None, macro=None) -> FakeUnlistedAnalysis:
     days = pd.date_range("2026-01-01", periods=15)
     values = [100.0] * 14 + [120.0]
     series = pd.DataFrame({"close": values}, index=days)
@@ -81,6 +85,8 @@ def make_analysis(moves=None, unattributed=None, items=None) -> FakeUnlistedAnal
         news_meta={"stats": {"unique_after_dedupe": 3, "relevant": 3}},
         unattributed=unattributed or [],
         items=items if items is not None else [_item(date(2026, 1, 5), 0.4)],
+        macro_events=macro_events or [],
+        macro=macro or {},
     )
 
 
@@ -215,6 +221,34 @@ class TestNewsCoverageSvg:
         items = [_item(date(2019, 1, 1), 0.5)]
         svg = news_coverage_svg(analysis.series, items, "Test Co")
         assert "1 item(s)" not in svg
+
+
+class TestMacroSection:
+    def test_no_macro_data_renders_no_section(self):
+        html = build_unlisted_html(make_analysis())
+        assert "<h2>Macro-economic backdrop</h2>" not in html
+
+    def test_repo_rate_change_appears_in_table_and_chart(self):
+        events = [MacroEvent(day=date(2026, 1, 5), indicator="repo_rate",
+                             label="RBI repo rate changed to 5.25%")]
+        macro = {"repo_rate_changes": [{"date": "2026-01-05",
+                                        "label": "RBI repo rate changed to 5.25%"}],
+                 "crude_oil": {}, "not_available": {}}
+        html = build_unlisted_html(make_analysis(macro_events=events, macro=macro))
+        assert "<h2>Macro-economic backdrop</h2>" in html
+        assert "RBI repo rate changed to 5.25%" in html
+        assert "macro-marker" in html
+
+    def test_crude_oil_and_disclosed_gaps_render(self):
+        macro = {
+            "repo_rate_changes": [],
+            "crude_oil": {"start_date": "2026-01-01", "end_date": "2026-01-15",
+                         "start_price": 80.0, "end_price": 76.0, "change": -0.05},
+            "not_available": {"GDP growth": "MOSPI is a client-rendered app."},
+        }
+        html = build_unlisted_html(make_analysis(macro=macro))
+        assert "-5.00%" in html
+        assert "GDP growth" in html
 
     def test_empty_series_does_not_raise(self):
         empty = pd.DataFrame(columns=["close"])

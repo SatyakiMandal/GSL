@@ -71,6 +71,36 @@ def _date_labels(dates: list[date], xs: list[float], max_labels: int = 9) -> str
     return "".join(parts)
 
 
+def _macro_markers(events: list, dates: list[date], xs: list[float],
+                   y_bottom: float) -> str:
+    """Small diamond markers along a panel's bottom edge for macro-economic
+    events (repo rate changes) that land on a date the panel already plots.
+
+    Deliberately a different shape and colour from the incident/price-move
+    badges (numbered circles): those rank *candidates this analysis found*,
+    these are *known, dated economic context* - conflating the two
+    vocabularies would make a reader search the ranked list below for a
+    "candidate" that was never one. A date not present in ``dates`` (a
+    non-trading day for a listed stock, say) is skipped rather than placed
+    at the nearest neighbour, which would misdate it.
+    """
+    if not events:
+        return ""
+    date_x = dict(zip(dates, xs))
+    parts = []
+    for event in events:
+        x = date_x.get(event.day)
+        if x is None:
+            continue
+        label = escape(event.label)
+        parts.append(
+            f'<g class="macro-marker" transform="translate({x:.1f},{y_bottom:.1f})">'
+            f'<path d="M0,-5 L5,0 L0,5 L-5,0 Z"/>'
+            f'<title>{event.day:%d %b %Y}: {label}</title></g>'
+        )
+    return "".join(parts)
+
+
 def _panel_frame(y0: float, height: float, title: str) -> str:
     return (
         f'<text x="{PAD_LEFT}" y="{y0 - 8:.1f}" class="panel-title">{escape(title)}</text>'
@@ -98,7 +128,8 @@ def _y_axis(y0: float, height: float, low: float, high: float,
 
 
 def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
-                 company: str, benchmark: str, incidents: list | None = None) -> str:
+                 company: str, benchmark: str, incidents: list | None = None,
+                 macro_events: list | None = None) -> str:
     """Three stacked panels: rebased prices, abnormal returns, coverage.
 
     Prices are rebased to 100 at the window's first session so a stock priced in
@@ -254,6 +285,8 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
         f'{escape(benchmark)}</text></g>'
     )
 
+    parts.append(_macro_markers(macro_events or [], dates, xs, price_y + price_h))
+
     # ---- Panel 2: abnormal returns ---------------------------------------
     abnormal = [float(v) * 100 for v in daily["abnormal_return"].fillna(0)]
     bound = max((abs(v) for v in abnormal), default=1.0) * 1.2 or 1.0
@@ -320,7 +353,8 @@ def timeline_svg(daily: pd.DataFrame, incident_days: set[date],
 
 
 def price_level_svg(series: pd.DataFrame, real_dates: set[date],
-                    company: str, moves: list | None = None) -> str:
+                    company: str, moves: list | None = None,
+                    macro_events: list | None = None) -> str:
     """A single panel: an unlisted share's indicative price level over time.
 
     ``series`` is the as-displayed daily frame (forward-fill included) -
@@ -412,6 +446,8 @@ def price_level_svg(series: pd.DataFrame, real_dates: set[date],
             f'<text x="{x:.1f}" y="{label_y:.1f}" text-anchor="middle" '
             f'class="badge-date">{date_label}</text>'
         )
+
+    parts.append(_macro_markers(macro_events or [], dates, xs, price_y + price_h))
 
     parts.append(
         f'<g transform="translate(0,{price_y + price_h + 16:.1f})">'

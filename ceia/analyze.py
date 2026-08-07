@@ -25,10 +25,11 @@ from pathlib import Path
 import pandas as pd
 
 from . import align, eventstudy, returns
+from . import macro as macro_mod
 from .fetcher import DEFAULT_USER_AGENT, Fetcher
 from .ingest import IngestResult, run as run_ingest
 from .models import NewsItem, RunConfig
-from .prices import PriceError
+from .prices import PriceError, PriceProvider
 from .ticker_lookup import TickerLookupError, resolve_ticker
 
 log = logging.getLogger(__name__)
@@ -49,6 +50,8 @@ class Analysis:
     secondary_meta: dict = field(default_factory=dict)
     robustness: dict = field(default_factory=dict)
     diagnostics: dict = field(default_factory=dict)
+    macro_events: list = field(default_factory=list)
+    macro: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         table = self.daily.reset_index()
@@ -73,6 +76,7 @@ class Analysis:
             "secondary_benchmark": secondary,
             "threshold_robustness": self.robustness,
             "flagging_diagnostics": self.diagnostics,
+            "macro": self.macro,
             "unattributed_items": [
                 {"url": i.url, "source": i.source, "headline": i.headline,
                  "reason": i.timestamp_confidence}
@@ -108,6 +112,7 @@ def analyse(
     return_threshold: float = eventstudy.DEFAULT_RETURN_Z,
     providers=None,
     permutations: int = returns.DEFAULT_PERMUTATIONS,
+    macro_provider: PriceProvider | None = None,
 ) -> Analysis:
     frame, model, price_meta = returns.build(
         config.ticker, config.benchmark, config.start, config.end,
@@ -185,6 +190,9 @@ def analyse(
                         "- a peer or sector index rather than the broad market."),
             })
 
+    macro_events = macro_mod.macro_events_in_window(config.start, config.end)
+    macro_summary = macro_mod.macro_summary(config.start, config.end, provider=macro_provider)
+
     return Analysis(
         config=config,
         daily=table,
@@ -200,6 +208,8 @@ def analyse(
         secondary_meta=secondary_meta,
         robustness=robustness,
         diagnostics=diagnostics,
+        macro_events=macro_events,
+        macro=macro_summary,
     )
 
 
@@ -376,6 +386,12 @@ def main() -> None:
                              "leading word as an extra alias (see "
                              "ceia.ingest.widen_aliases()). On by default; "
                              "costs one extra ticker-search request per run.")
+    parser.add_argument("--skip-macro-prices", action="store_true",
+                        help="Don't fetch Brent crude for the macro-economic "
+                             "backdrop section. Repo rate events (no network "
+                             "needed) still show either way. Useful if Yahoo "
+                             "is rate-limiting this connection - see the "
+                             "README's note on shared/proxied egress.")
     parser.add_argument("--price-csv", default=None,
                         help="Directory of <SYMBOL>.csv files; forces the CSV provider.")
     parser.add_argument("--api-key", default=None,
@@ -442,11 +458,13 @@ def main() -> None:
         providers = [YFinanceProvider(), YahooChartProvider(),
                     AlphaVantageProvider(api_key=args.api_key), CsvProvider()]
 
+    macro_provider = macro_mod.SkippedPriceProvider() if args.skip_macro_prices else None
     try:
         analysis = analyse(
             config, items, news_meta, lead_in_days=args.lead_in_days,
             coverage_threshold=args.coverage_z, return_threshold=args.return_z,
             providers=providers, permutations=args.permutations,
+            macro_provider=macro_provider,
         )
     except PriceError as exc:
         print(f"\nPrice data unavailable: {exc}")

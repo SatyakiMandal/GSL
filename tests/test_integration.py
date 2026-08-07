@@ -138,7 +138,8 @@ def run_pipeline(price_dir: Path, start=date(2023, 1, 20), end=date(2023, 2, 3),
         elif "rejects" in item.headline:
             item.emotion_label = "annoyance"
     analysis = analyse(config, kept, {"stats": {"unique_after_dedupe": len(kept)}},
-                       providers=[CsvProvider(price_dir)], return_threshold=1.5)
+                       providers=[CsvProvider(price_dir)], return_threshold=1.5,
+                       macro_provider=CsvProvider(price_dir))
     return analysis, kept, dropped
 
 
@@ -303,6 +304,7 @@ class TestDegradation:
         config = RunConfig(company="Testco", ticker="TEST.NS", benchmark="^NSEI",
                            start=date(2023, 1, 20), end=date(2023, 2, 3),
                            aliases=["Testco Ltd"])
-        analysis = analyse(config, [orphan], {}, providers=[CsvProvider(prices)])
+        analysis = analyse(config, [orphan], {}, providers=[CsvProvider(prices)],
+                          macro_provider=CsvProvider(prices))
         assert len(analysis.unattributed) == 1
         assert "could not be placed on a trading day" in build_html(analysis)

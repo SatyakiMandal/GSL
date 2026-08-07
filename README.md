@@ -16,7 +16,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-463 tests
+492 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -123,7 +123,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
 `pip install`, which is why it's not in `.[all]`).
 
 ```bash
-pytest -q     # 463 tests, no network required
+pytest -q     # 492 tests, no network required
 ```
 
 ### Run the spike
@@ -1076,6 +1076,97 @@ this project's call to make on its own: raised directly, the answer was to
 proceed on the same precedent already applied elsewhere. Recorded here
 rather than left implicit.
 
+## Phase 6 — Macro-economic backdrop
+
+Added on request (a professor's ask, relayed through the student using this
+tool): RBI repo rate changes, and — after checking — Brent crude, alongside
+whichever candidate incident days or price moves a run already finds. GDP
+growth, CPI inflation, IIP, fiscal deficit, and the 10-year G-Sec yield were
+also asked for and checked; four of the five are disclosed as not included
+rather than built on an unverified guess.
+
+```bash
+python -m ceia.analyze --company "Adani Enterprises" --ticker ADANIENT.NS \
+  --start 2023-01-24 --end 2023-02-10 --alias Adani --html out/report.html
+# The Macro-economic backdrop section and the timeline's diamond markers
+# are on by default - no new flag needed to see them.
+```
+
+### What checked out, and what didn't
+
+The same feasibility discipline as every other data source in this project
+(robots.txt, real vs. client-rendered content, a genuine historical route —
+see [Phase 0](#phase-0--feasibility-spike)), applied to seven requested
+indicators:
+
+- **Repo rate changes** — RBI's own site (`rbi.org.in`) returns `418
+  Unauthorised Access` on `robots.txt` itself, for every path tried — the
+  same "permission cannot be established" wall Business Standard hit (see
+  above), ruling it out as a direct source. But repo rate changes are always
+  major, extensively covered news events, so this is instead a small,
+  source-cited static table of confirmed rate *changes* (not every MPC
+  meeting — a hold is not an event), cross-checked against multiple
+  independent reports (SCC Times, Business Standard, DD News, RBI's own MPC
+  schedule) rather than taken from memory or a single source
+  (`ceia/macro.py:REPO_RATE_CHANGES`). Needs a manual update when a new
+  change happens after the dates in that table.
+- **Crude oil (Brent)** — reuses this project's existing
+  `ceia.prices.YahooChartProvider` against the `BZ=F` futures ticker, the
+  same infrastructure already fetching equities and the benchmark index.
+  Subject to the identical Yahoo rate-limit on shared/proxied egress already
+  documented above for equity tickers — verified live: the real fetch hit
+  the same `HTTP 429`, and degraded to a disclosed "unavailable" note
+  instead of failing the run, the same pattern the secondary-benchmark
+  comparison already uses for a bad peer ticker.
+- **GDP growth / CPI inflation / IIP** — checked and ruled out for a hard
+  technical reason, not a policy choice: MOSPI's site (`mospi.gov.in`) is a
+  client-rendered React single-page app (`<div id="root"></div>` plus a JS
+  module entry point) — a plain HTTP fetch returns an empty shell for every
+  path tried, including its press-release listing. This tool's fetcher is
+  deliberately plain HTTP everywhere (no headless browser anywhere in the
+  pipeline — see [Phase 0](#phase-0--feasibility-spike)'s reasoning for the
+  news sources), so there is nothing here to parse without a materially
+  larger architectural change.
+- **Fiscal deficit** — checked and left out for a softer reason: the
+  Controller General of Accounts (`cga.nic.in`) does serve real,
+  server-rendered HTML (confirmed not a JS shell, unlike MOSPI), but no
+  structured monthly-deficit page turned up from its crawlable navigation in
+  the time budgeted for this spike. A genuine "not yet investigated enough
+  to trust," disclosed as such rather than guessed at.
+- **10-year G-Sec yield** ("borrowing rate") — Yahoo Finance's chart API
+  simply does not carry Indian government bond yields; checked several
+  plausible ticker symbols and Yahoo's own search endpoint directly, no
+  match either way. RBI's own database (DBIE) and FBIL both failed to
+  connect from this sandbox at all — possibly a real block, possibly this
+  environment's networking, unverified either way (the same "check on an
+  unproxied connection" caveat already noted for Yahoo above).
+
+All five not-included indicators are still surfaced in every report's Macro
+backdrop section — named, with the specific reason each was checked and
+rejected — rather than silently absent. `ceia/macro.py:NOT_AVAILABLE_INDICATORS`
+is the single source of truth both the report and this README draw from.
+
+### How it's shown
+
+RBI repo rate changes are dated, discrete events, not a daily series — shown
+both as small purple diamond markers along the bottom of the existing price
+panel (`ceia/charts.py:_macro_markers()`, reused by both the listed and
+unlisted price charts) and as a dated table in a new "Macro-economic
+backdrop" report section. Deliberately a different shape and colour from the
+numbered incident/price-move badges: those rank *candidates this analysis
+found*, a repo rate marker is *known, dated economic context* — conflating
+the two vocabularies would send a reader searching the ranked list below for
+a "candidate" that was never one. Brent crude, a continuous daily series, is
+instead shown as a single start-to-end % change stat alongside the table,
+the same descriptive register as the unlisted report's news-coverage chart —
+context alongside the price action, never framed as having driven it.
+
+`--skip-macro-prices` (both `ceia.analyze` and `ceia.unlisted`) skips the
+Brent crude network call entirely — repo rate events still show either way,
+since they cost nothing to compute. Useful given the Yahoo rate-limit above:
+a live run can otherwise spend up to ~126 seconds retrying a single 429
+before giving up and disclosing "unavailable" regardless.
+
 ## Reusing the collected corpus
 
 `data/adani_wide_2023.json` holds the 137-item Adani corpus from the validation
@@ -1204,3 +1295,9 @@ Decisions made without asking, and the reasoning:
    deliberately engineered than UnlistedZone's (a taxonomy of bot categories,
    not a blanket block), so it was checked with again rather than silently
    waved through; the answer was the same as before.
+13. **The repo rate history table is a point-in-time snapshot, not a live
+   feed.** See [Phase 6](#phase-6--macro-economic-backdrop) —
+   `ceia/macro.py:REPO_RATE_CHANGES` is cross-checked static data, verified
+   against multiple independent sources as of this project's own knowledge
+   cutoff, and will silently miss any rate change announced after that
+   unless someone updates the table by hand.
