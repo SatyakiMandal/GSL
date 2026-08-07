@@ -39,6 +39,9 @@ _TIMESTAMP_META = [
     ("name", "pubdate"),
     ("name", "article.published"),
     ("property", "og:published_time"),
+    # VCCircle's non-standard tag - no JSON-LD articleBody or standard
+    # article:published_time meta on that site, verified directly.
+    ("property", "content_type:published_time"),
 ]
 
 _PAYWALL_MARKERS = (

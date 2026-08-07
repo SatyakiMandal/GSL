@@ -37,10 +37,19 @@ import pandas as pd
 
 from .eventstudy import _excerpt
 from .fetcher import DEFAULT_USER_AGENT, Fetcher
-from .ingest import IngestResult, run as run_ingest
+from .ingest import DEFAULT_SOURCES, IngestResult, run as run_ingest
 from .models import NewsItem, RunConfig
+from .sources import UNLISTED_EXTRA_SOURCES
 
 log = logging.getLogger(__name__)
+
+# Unlisted/pre-IPO companies get opportunistic coverage at best from the
+# mainstream listed-market press DEFAULT_SOURCES draws on - real routine
+# coverage of funding rounds and private-market corporate actions sits on
+# startup/private-market-focused outlets instead (see sources.py's notes on
+# ENTRACKR/VCCIRCLE/INC42). Only ceia.unlisted opts into these; the
+# already-verified listed-company pipeline's DEFAULT_SOURCES is untouched.
+UNLISTED_DEFAULT_SOURCES = DEFAULT_SOURCES + UNLISTED_EXTRA_SOURCES
 
 # UnlistedZone's chart isn't served from a clean JSON API - the data is
 # inlined into a Next.js React Server Components streaming payload
@@ -356,6 +365,11 @@ def main() -> None:
     parser.add_argument("--skip-alias-widening", action="store_true",
                         help="Don't try the company's leading word as an "
                              "extra alias (see ceia.ingest.widen_aliases()).")
+    parser.add_argument("--sources", nargs="*", default=None,
+                        help="Override the source list. Defaults to the "
+                             "listed-company sources plus entrackr, vccircle "
+                             "and inc42, which cover the unlisted/pre-IPO "
+                             "space the mainstream press mostly does not.")
     parser.add_argument("--cache-dir", default="cache")
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     parser.add_argument("--out", default="out/unlisted.json")
@@ -370,6 +384,7 @@ def main() -> None:
             company=args.company, ticker="",
             start=date.fromisoformat(args.start), end=date.fromisoformat(args.end),
             aliases=args.alias,
+            sources=args.sources if args.sources is not None else UNLISTED_DEFAULT_SOURCES,
         )
     except ValueError as exc:
         print(f"\n{exc}")

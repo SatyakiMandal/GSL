@@ -152,12 +152,107 @@ BUSINESS_STANDARD = Source(
            "Replaced by Moneycontrol; see docs/phase0-findings.md."),
 )
 
+# Added for the unlisted/pre-IPO space specifically (ceia.unlisted): the five
+# sources above are mainstream listed-market financial press, which cover an
+# unlisted company opportunistically at best - real routine coverage of
+# funding rounds, valuations and private-market corporate actions sits on
+# startup/private-market-focused outlets instead. Left out of DEFAULT_SOURCES
+# (ceia/ingest.py) so the already-verified listed-company pipeline is
+# untouched; ceia.unlisted opts into these via its own wider default.
+ENTRACKR = Source(
+    key="entrackr",
+    name="Entrackr",
+    origin="https://entrackr.com",
+    search_url="https://entrackr.com/?s=adani",
+    discovery=[
+        # Day-partitioned: /sitemap_YYYY-MM-DD.xml, indexed at
+        # webcontent-sitemap.xml back to 2017-05-29 (verified).
+        "https://entrackr.com/webcontent-sitemap.xml",
+        "https://entrackr.com/sitemap_2026-08-06.xml",
+        "https://entrackr.com/news-sitemap.xml",
+    ],
+    sample_article=(
+        "https://entrackr.com/fintrackr/"
+        "ixigo-posts-rs-357-cr-revenue-in-q1-fy27-profit-rises-81-12236939"
+    ),
+    notes=(
+        "robots.txt is permissive (User-agent: * / Allow: /, only /static/* "
+        "disallowed) and names no AI agent. JSON-LD NewsArticle carries "
+        "datePublished and a full articleBody."
+    ),
+)
+
+VCCIRCLE = Source(
+    key="vccircle",
+    name="VCCircle",
+    origin="https://www.vccircle.com",
+    search_url="https://www.vccircle.com/?s=adani",
+    discovery=[
+        # Numbered, reverse-chronological: article-sitemap-1.xml is the
+        # newest window, article-sitemap-66.xml reaches back to 2008
+        # (verified directly - there is no date in the filename or a usable
+        # per-file lastmod at the index level, only inside each file).
+        "https://www.vccircle.com/sitemap/article-sitemap-index.xml",
+        "https://www.vccircle.com/sitemap/article-sitemap-1.xml",
+    ],
+    sample_article=(
+        "https://www.vccircle.com/"
+        "tatasons-pushed-towards-listing-following-central-bank-classification"
+    ),
+    notes=(
+        "robots.txt is permissive (User-agent: * / Allow: /) and names no AI "
+        "agent. No JSON-LD articleBody; the publish time comes from a "
+        "non-standard content_type:published_time meta tag (added to "
+        "extract.py's timestamp list), and body text falls back to the "
+        "generic paragraph-density extractor, verified working."
+    ),
+)
+
+INC42 = Source(
+    key="inc42",
+    name="Inc42",
+    origin="https://inc42.com",
+    search_url="https://inc42.com/?s=adani",
+    discovery=[
+        # WordPress Yoast archive: sitemap_index.xml's numbered
+        # post-sitemapN.xml files run oldest (2) to newest (56, as of
+        # writing), each internally per-URL <lastmod>-dated. The unnumbered
+        # post-sitemap.xml duplicates the newest numbered file and is
+        # skipped by discovery.inc42() accordingly.
+        "https://inc42.com/sitemap_index.xml",
+        "https://inc42.com/news-sitemap.xml",
+    ],
+    sample_article=(
+        "https://inc42.com/buzz/pe-giant-tpg-offloads-shadowfax-shares-in-"
+        "%e2%82%b9301-cr-bulk-deal/"
+    ),
+    notes=(
+        "robots.txt's default User-agent: * group is Allow: / (our own "
+        "user agent - CompanyEventImpactAnalyzer/0.1 - is not itself named "
+        "anywhere in the file) but a separate, explicitly engineered group "
+        "blocks ClaudeBot/GPTBot/etc. by name from everything except "
+        "structured entity pages, while allowing Claude-Web/Claude-User "
+        "('live answer-engine fetchers') everywhere. Raised directly rather "
+        "than decided silently, given how deliberate that policy is; the "
+        "answer was to proceed under the same rule already applied to "
+        "UnlistedZone - a distinct, honestly-declared user agent is "
+        "evaluated against the general group, not a block aimed at named "
+        "crawlers. JSON-LD NewsArticle carries datePublished and a full "
+        "articleBody."
+    ),
+)
+
 # Business Standard is retained only so the probe keeps reporting why it is
 # unavailable; ingestion uses ACTIVE_SOURCES.
 ALL_SOURCES = [ECONOMIC_TIMES, FINANCIAL_EXPRESS, BUSINESS_LINE,
-               MONEYCONTROL, BUSINESS_TODAY, BUSINESS_STANDARD]
+               MONEYCONTROL, BUSINESS_TODAY, BUSINESS_STANDARD,
+               ENTRACKR, VCCIRCLE, INC42]
 ACTIVE_SOURCES = [ECONOMIC_TIMES, FINANCIAL_EXPRESS, BUSINESS_LINE, MONEYCONTROL,
                   BUSINESS_TODAY]
+
+# ceia.unlisted's opt-in additions to DEFAULT_SOURCES (ceia/ingest.py), keyed
+# the same way discovery.STRATEGIES and RunConfig.sources already are.
+UNLISTED_EXTRA_SOURCES = ["entrackr", "vccircle", "inc42"]
 
 # User-agent tokens that these sites use to refuse AI crawlers. The probe
 # reports which of them each site blocks, because it changes who may run this

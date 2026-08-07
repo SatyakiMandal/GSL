@@ -234,12 +234,122 @@ def business_today(fetcher: Fetcher, start: date, end: date) -> list[Candidate]:
     return out
 
 
+def entrackr(fetcher: Fetcher, start: date, end: date) -> list[Candidate]:
+    """Day sitemaps at /sitemap_YYYY-MM-DD.xml, verified back to 2017-05-29 -
+    same direct-URL-construction shape as financial_express/business_today,
+    guessed rather than walked through the declared index sitemap."""
+    out: list[Candidate] = []
+    days = list(_days(start, end))
+    log.info("entrackr: scanning %d day(s) of sitemaps", len(days))
+    for i, day in enumerate(days, 1):
+        xml = _fetch_xml(fetcher, f"https://entrackr.com/sitemap_{day:%Y-%m-%d}.xml")
+        if not xml:
+            continue
+        out.extend(Candidate(url, "entrackr", day) for url in _locs(xml))
+        if i % 5 == 0 or i == len(days):
+            log.info("entrackr: %d/%d days done, %d URLs so far", i, len(days), len(out))
+    return out
+
+
+def vccircle(fetcher: Fetcher, start: date, end: date, max_files: int = 200) -> list[Candidate]:
+    """Numbered article-sitemap-N.xml files, reverse chronological - file 1 is
+    the newest window, file 66 reached back to 2008 when checked. Neither the
+    filename nor the sitemap-index's own <lastmod> encode a per-file date (the
+    index just stamps every entry with the last site rebuild), so the file(s)
+    covering the wanted window are found by walking forward from the newest
+    file, using each file's *own* per-URL dates, until a file's entire content
+    is older than the window.
+    """
+    out: list[Candidate] = []
+    n = 1
+    margin_start = start - timedelta(days=1)
+    while n <= max_files:
+        xml = _fetch_xml(
+            fetcher, f"https://www.vccircle.com/sitemap/article-sitemap-{n}.xml")
+        if not xml:
+            break
+        pairs = _loc_lastmod_pairs(xml)
+        dated = [when for _, when in pairs if when is not None]
+        if not dated:
+            break
+        newest, oldest = max(dated), min(dated)
+        if newest >= margin_start:
+            out.extend(
+                Candidate(url, "vccircle", when) for url, when in pairs
+                if when and margin_start <= when <= end + timedelta(days=1)
+            )
+        if oldest < margin_start:
+            break
+        n += 1
+    log.info("vccircle: scanned %d sitemap file(s), %d URLs in window", n, len(out))
+    return out
+
+
+_SITEMAP_BLOCK_RE = re.compile(r"<sitemap>(.*?)</sitemap>", re.S | re.I)
+
+
+def _sitemap_index_pairs(xml: str) -> list[tuple[str, date | None]]:
+    """Like _loc_lastmod_pairs, but for a <sitemapindex> of <sitemap> entries
+    rather than a <urlset> of <url> entries - the wrapper tag is the only
+    difference in shape."""
+    pairs = []
+    for block in _SITEMAP_BLOCK_RE.findall(xml):
+        loc = _LOC_RE.search(block)
+        if not loc:
+            continue
+        stamp = _LASTMOD_RE.search(block)
+        when = None
+        if stamp:
+            try:
+                when = datetime.fromisoformat(
+                    stamp.group(1).replace("Z", "+00:00")).date()
+            except ValueError:
+                when = None
+        pairs.append((_unescape(loc.group(1)), when))
+    return pairs
+
+
+def inc42(fetcher: Fetcher, start: date, end: date) -> list[Candidate]:
+    """WordPress Yoast archive: sitemap_index.xml's numbered post-sitemapN.xml
+    files run oldest to newest, each internally per-URL <lastmod>-dated - a
+    file's own index-level lastmod marks its *last* (newest) article, so a
+    file is worth fetching whenever that boundary reaches into the wanted
+    window or beyond it. The unnumbered post-sitemap.xml (no digits, so the
+    regex below skips it) duplicates the newest numbered file - fetching it
+    too would just double the newest window's candidates.
+    """
+    index = _fetch_xml(fetcher, "https://inc42.com/sitemap_index.xml")
+    if not index:
+        return []
+    margin_start = start - timedelta(days=1)
+    numbered = [
+        (url, when) for url, when in _sitemap_index_pairs(index)
+        if re.search(r"/post-sitemap\d+\.xml$", url)
+    ]
+    out: list[Candidate] = []
+    for url, when in numbered:
+        if when is not None and when < margin_start:
+            continue
+        xml = _fetch_xml(fetcher, url)
+        if not xml:
+            continue
+        for article_url, article_when in _loc_lastmod_pairs(xml):
+            if article_when and not (margin_start <= article_when <= end + timedelta(days=1)):
+                continue
+            out.append(Candidate(article_url, "inc42", article_when))
+    log.info("inc42: %d URLs in window", len(out))
+    return out
+
+
 STRATEGIES = {
     "economic_times": economic_times,
     "financial_express": financial_express,
     "business_line": business_line,
     "moneycontrol": moneycontrol,
     "business_today": business_today,
+    "entrackr": entrackr,
+    "vccircle": vccircle,
+    "inc42": inc42,
 }
 
 

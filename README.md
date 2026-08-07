@@ -16,7 +16,7 @@ It is a structured case study generator, not a trading signal and not proof of
 causation. See [Limitations](#limitations).
 
 **Status: complete and verified on real data.** All four phases, a GUI on top,
-451 tests
+463 tests
 passing, and PRD Success Metric #2 — a known incident correctly flagged with
 the abnormal-return direction matching sentiment — is met. `yfinance` could
 not be reached from the build sandbox (a TLS-terminating proxy broke it), so
@@ -123,7 +123,7 @@ PDF export (see [PDF export](#pdf-export) below — needs one extra step beyond
 `pip install`, which is why it's not in `.[all]`).
 
 ```bash
-pytest -q     # 451 tests, no network required
+pytest -q     # 463 tests, no network required
 ```
 
 ### Run the spike
@@ -905,6 +905,72 @@ why this is a locally-scraped-directory match rather than a single lookup
 call. This is purely additive: it changes nothing about how listed-stock
 runs (`ceia.ingest`, `ceia.analyze`) resolve tickers.
 
+### Three extra news sources, unlisted-space only
+
+Running this tool on real unlisted companies (Polymatech, among others)
+turned up a second gap, independent of the price data: the five listed-market
+sources (`DEFAULT_SOURCES` in `ceia/ingest.py`) cover an unlisted company
+opportunistically at best — mostly when there's an IPO-plans story — because
+these companies aren't part of daily market coverage the way a listed
+blue-chip is. Routine coverage of funding rounds, valuations and
+private-market corporate actions (a CEO stepping down, for one real example
+turned up live: `entrackr.com/fintrackr/nazaras-q1-fy27-results...`) sits
+instead on startup/private-market-focused outlets.
+
+`ceia.unlisted` now defaults to `DEFAULT_SOURCES` plus three such outlets —
+**Entrackr**, **VCCircle**, and **Inc42** — via a new `UNLISTED_DEFAULT_SOURCES`
+constant (`ceia/unlisted.py`), each checked against the same bar Phase 0 set
+for the original five (`robots.txt` readable and permissive, a discoverable
+historical archive, parseable timestamps and body text) before being added:
+
+- **Entrackr** — day-partitioned archive (`sitemap_YYYY-MM-DD.xml`, verified
+  back to 2017-05-29), JSON-LD `NewsArticle` with a full `articleBody`. The
+  cleanest fit of the three.
+- **VCCircle** — a numbered, reverse-chronological archive
+  (`article-sitemap-N.xml`; file 1 is the newest window, file 66 reached back
+  to 2008 when checked) discovered by walking forward from file 1 until a
+  file's own content is entirely older than the wanted window
+  (`discovery.py:vccircle()`), since neither the filename nor the sitemap
+  index's `lastmod` encode a per-file date the way the other sources' do. No
+  JSON-LD body; the publish time comes from a non-standard
+  `content_type:published_time` meta tag, added to `extract.py`'s timestamp
+  list (`tests/test_extract.py` pins it).
+- **Inc42** — a WordPress/Yoast archive (`sitemap_index.xml`'s numbered
+  `post-sitemapN.xml` files, oldest to newest) with JSON-LD `articleBody`.
+
+**Only `ceia.unlisted` opts into these** — `DEFAULT_SOURCES` itself, and
+therefore every already-verified `ceia.ingest`/`ceia.analyze` listed-company
+run, is untouched. Override with `--sources` on either CLI if a run needs a
+different set.
+
+**Inc42's `robots.txt` raised the same question UnlistedZone's did, again
+made explicitly rather than silently.** It names `ClaudeBot` (and other named
+AI crawlers) specifically, restricting them to structured entity pages
+(`/company/`, `/person/`, …) while explicitly allowing "live answer-engine
+fetchers" (`Claude-Web`, `Claude-User`) everywhere and leaving the general
+`User-agent: *` group — which our own, honestly-declared user agent falls
+under, since it is not itself named anywhere in the file — at `Allow: /`.
+More deliberately engineered than the earlier UnlistedZone case (a whole
+taxonomy of bot categories, not a blanket block), so it was raised again
+rather than assumed to fall under the same precedent automatically. The
+answer was the same: proceed under the existing rule that a distinct,
+honestly-declared user agent is evaluated against the general group, not a
+block aimed at named crawlers.
+
+**LiveMint was checked and dropped.** Its `robots.txt` is fully permissive
+with no AI-agent carve-outs, but the *only* news sitemaps it declares are
+`sitemap/yesterday.xml` and `sitemap/today.xml` — no month/day/numbered
+archive route exists for it at all, verified directly. That covers a live
+news feed, not the months-long historical backfill this tool actually needs,
+so it fails the same bar Business Standard failed for a different reason
+(Phase 0) and was left out rather than wired up to silently return almost
+nothing on any but the most recent run. **YourStory was checked and
+dropped** for a harder reason: its `robots.txt` looks permissive, but its
+sitemap and article routes sit behind a Cloudflare bot-challenge (`Just a
+moment...` / 403) that blocks a plain HTTP fetch regardless of policy — the
+same category of wall that already disqualified Business Standard's Akamai
+edge.
+
 ### This is deliberately not the same tool as Phases 2–4
 
 An unlisted share's price is not the same kind of number as a listed one,
@@ -1107,3 +1173,9 @@ Decisions made without asking, and the reasoning:
    answer was to proceed on this project's existing named-crawler precedent,
    but that call was asked for rather than assumed, since this is the first
    source where the named bot is literally the one doing the building.
+12. **Inc42's named `ClaudeBot` restriction was raised again, not assumed to
+   fall under the UnlistedZone precedent automatically.** See
+   [Phase 5](#phase-5--unlisted--pre-ipo-shares) — its policy is more
+   deliberately engineered than UnlistedZone's (a taxonomy of bot categories,
+   not a blanket block), so it was checked with again rather than silently
+   waved through; the answer was the same as before.

@@ -20,7 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ceia.extract import IST  # noqa: E402
 from ceia.models import NewsItem, RunConfig  # noqa: E402
+from ceia.ingest import DEFAULT_SOURCES  # noqa: E402
 from ceia.unlisted import (  # noqa: E402
+    UNLISTED_DEFAULT_SOURCES,
     PriceMove,
     UnlistedCompanyNotFoundError,
     UnlistedPriceError,
@@ -394,3 +396,15 @@ class TestResolveUnlistedUrl:
         fetcher = _FakeFetcher("<html>nothing here</html>")
         with pytest.raises(UnlistedCompanyNotFoundError):
             resolve_unlisted_url("Sonata Software", fetcher, max_pages=1)
+
+
+class TestUnlistedDefaultSources:
+    def test_extends_rather_than_replaces_the_listed_company_default(self):
+        """The listed-company pipeline's own DEFAULT_SOURCES must come
+        through unchanged - ceia.unlisted only adds to it, never edits it in
+        place, so ceia.ingest/ceia.analyze runs are unaffected."""
+        assert UNLISTED_DEFAULT_SOURCES[:len(DEFAULT_SOURCES)] == DEFAULT_SOURCES
+
+    def test_adds_the_three_unlisted_space_sources(self):
+        added = set(UNLISTED_DEFAULT_SOURCES) - set(DEFAULT_SOURCES)
+        assert added == {"entrackr", "vccircle", "inc42"}
