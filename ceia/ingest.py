@@ -498,7 +498,16 @@ def main() -> None:
     parser.add_argument("--end", required=True)
     parser.add_argument("--alias", action="append", default=[],
                         help="Repeatable. Short names, product names, misspellings.")
-    parser.add_argument("--sources", nargs="*", default=None)
+    parser.add_argument("--sources", nargs="*",
+                        default=DEFAULT_SOURCES + WAYBACK_SOURCES,
+                        help="Defaults to every runnable source in one "
+                             "command: the 5 always-on sources plus "
+                             "business_standard and livemint's best-effort "
+                             "Wayback Machine fallback, which can sometimes "
+                             "find nothing for a given window - check "
+                             "source_status for what each source actually "
+                             "found. Pass an explicit, narrower list to opt "
+                             "out of any of them.")
     parser.add_argument("--min-relevance", type=float, default=0.35)
     parser.add_argument("--limit", type=int, default=None,
                         help="Cap articles fetched, evenly spread across the "

@@ -1386,17 +1386,24 @@ happens next differs by site:
   that path was never blocked — faster, and gets current formatting rather
   than Wayback's URL-rewritten copy.
 
-Both are opt-in only (`ceia.sources.WAYBACK_SOURCES`) — never added to
-`DEFAULT_SOURCES`, since coverage is never guaranteed the way the other five
-sources' sitemap-driven discovery is. Add `business_standard` and/or
-`livemint` to `--sources` explicitly to use them:
+Both are opt-in at the library level (`ceia.sources.WAYBACK_SOURCES`) —
+never added to `DEFAULT_SOURCES` itself, since coverage is never guaranteed
+the way the other five sources' sitemap-driven discovery is — but both
+`ceia.ingest`'s and `ceia.analyze`'s CLIs default `--sources` to every
+runnable source, this pair included, so a plain command already checks
+everything in one shot without needing to enumerate sources by hand:
 
 ```bash
 python -m ceia.ingest --company "Adani Enterprises" --ticker ADANIENT.NS \
-  --start 2023-01-20 --end 2023-02-03 --alias "Adani Group" \
-  --sources economic_times financial_express business_line moneycontrol \
-            business_today business_standard livemint
+  --start 2023-01-20 --end 2023-02-03 --alias "Adani Group"
 ```
+
+Pass an explicit, narrower `--sources` list to opt back out of either one
+(or of any of the other five). Whatever each run actually found from
+`business_standard`/`livemint` — a snapshot timestamp and candidate count,
+or nothing near the window — is always in `source_status`, the console log,
+and the JSON output, so a quiet run is visible as "checked, found nothing"
+rather than mistaken for a source that was never tried.
 
 Whatever each run actually finds — a snapshot timestamp and how many
 candidate URLs it yielded, or nothing found near the window — is reported in
