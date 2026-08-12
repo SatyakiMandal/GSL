@@ -51,6 +51,7 @@ border-radius:0 7px 7px 0;padding:15px 19px;margin:18px 0}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
 .stat .k{color:var(--muted);font-size:.76rem;text-transform:uppercase;letter-spacing:.05em}
 .stat .v{font-size:1.28rem;font-weight:600;margin-top:3px;font-variant-numeric:tabular-nums}
+.stat .v.long{font-size:.82rem;font-weight:500;line-height:1.5;font-variant-numeric:normal}
 .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:14px 0}
 table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:640px}
 th,td{padding:8px 11px;text-align:right;border-bottom:1px solid var(--line);
@@ -140,8 +141,14 @@ def _pct(value: float, digits: int = 2) -> str:
     return f"{value * 100:+.{digits}f}%"
 
 
-def _stat(key: str, value: str) -> str:
-    return f'<div class="stat"><div class="k">{escape(key)}</div><div class="v">{value}</div></div>'
+def _stat(key: str, value: str, long: bool = False) -> str:
+    """A .grid stat card. ``long=True`` renders the value in a smaller,
+    regular-weight style for a full sentence (an unavailability reason, a
+    disclosed caveat) rather than the large bold style meant for a short
+    number - a long sentence in that style overflowed its card and blew up
+    the whole section's height (a real bug this project shipped)."""
+    css_class = "v long" if long else "v"
+    return f'<div class="stat"><div class="k">{escape(key)}</div><div class="{css_class}">{value}</div></div>'
 
 
 def _macro_section(macro: dict) -> str:
@@ -180,7 +187,7 @@ def _macro_section(macro: dict) -> str:
             f'→ ${crude["end_price"]:,.2f})',
         )
     else:
-        crude_stat = _stat("Brent crude", escape(crude.get("note") or "unavailable"))
+        crude_stat = _stat("Brent crude", escape(crude.get("note") or "unavailable"), long=True)
 
     if gsec.get("value") is not None:
         gsec_stat = _stat(
@@ -188,7 +195,8 @@ def _macro_section(macro: dict) -> str:
             f'{gsec["value"]:.2f}% as of {escape(gsec["as_of"])}',
         )
     else:
-        gsec_stat = _stat("10Y G-Sec yield", escape(gsec.get("note") or "unavailable"))
+        gsec_stat = _stat("10Y G-Sec yield", escape(gsec.get("note") or "unavailable"),
+                          long=True)
 
     if deficit.get("lakh_crore") is not None:
         deficit_stat = _stat(
@@ -197,7 +205,8 @@ def _macro_section(macro: dict) -> str:
             f'of GDP), FY {escape(deficit["fiscal_year"])}',
         )
     else:
-        deficit_stat = _stat("Fiscal deficit", escape(deficit.get("note") or "unavailable"))
+        deficit_stat = _stat("Fiscal deficit", escape(deficit.get("note") or "unavailable"),
+                             long=True)
 
     gaps_block = ""
     if not_available:
@@ -310,7 +319,8 @@ def _financials_section(financials: dict) -> str:
         nopat_stat = _stat(
             "NOPAT", f"{financials['nopat']:,.0f} {escape(financials['currency_unit'])}")
     else:
-        nopat_stat = _stat("NOPAT", escape(financials.get("nopat_note") or "not computed"))
+        nopat_stat = _stat("NOPAT", escape(financials.get("nopat_note") or "not computed"),
+                          long=True)
 
     order_book = financials.get("order_book")
     if order_book:
@@ -318,7 +328,8 @@ def _financials_section(financials: dict) -> str:
             "Order book", f"{order_book['latest']:,.0f} {escape(financials['currency_unit'])}")
     else:
         order_book_stat = _stat(
-            "Order book", escape(financials.get("order_book_note") or "unavailable"))
+            "Order book", escape(financials.get("order_book_note") or "unavailable"),
+            long=True)
 
     return f"""
 <h2>Financial fundamentals</h2>

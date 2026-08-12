@@ -521,6 +521,14 @@ class TestMacroSection:
         html = build_html(make_analysis(macro=macro))
         assert "+5.00%" in html
 
+    def test_crude_oil_unavailable_note_uses_the_small_note_style(self):
+        """Same overflow bug as the financials section's long notes - a
+        macro fetch failure note is a full sentence, not a short number."""
+        macro = {"repo_rate_changes": [], "not_available": {},
+                 "crude_oil": {"note": "crude oil price unavailable: BZ=F: HTTP 429"}}
+        html = build_html(make_analysis(macro=macro))
+        assert '<div class="v long">crude oil price unavailable' in html
+
     def test_crude_oil_failure_is_disclosed_not_hidden(self):
         macro = {"repo_rate_changes": [], "not_available": {},
                  "crude_oil": {"note": "crude oil price unavailable: BZ=F: HTTP 429"}}
@@ -716,6 +724,27 @@ class TestFinancialsSection:
         }
         html = build_html(make_analysis(financials=financials))
         assert "tax rate not available for the latest quarter" in html
+
+    def test_long_unavailability_notes_use_the_small_note_style_not_the_big_stat_style(self):
+        """A real bug this project shipped: order_book_note/nopat_note are
+        full sentences, but _stat() rendered every value in the same large,
+        bold style meant for a short number - a long note overflowed its
+        card and blew up the whole section's height. Long notes must use
+        the smaller 'v long' style instead of the bare 'v' style."""
+        financials = {
+            "note": "", "as_of": "2025-12-31", "statement_kind": "consolidated",
+            "currency_unit": "Rs. Crores", "screener_url": "https://x",
+            "revenue": None, "expenses": None, "operating_income": None,
+            "tax_rate_pct": None, "nopat": None,
+            "nopat_note": "no operating-income row (Operating Profit/Financing "
+                          "Profit) found",
+            "order_book": None,
+            "order_book_note": "not applicable: this company's screener.in page "
+                               "carries no Order Book row at all.",
+        }
+        html = build_html(make_analysis(financials=financials))
+        assert '<div class="v long">no operating-income row' in html
+        assert '<div class="v long">not applicable: this company' in html
 
     def test_order_book_with_real_values_is_shown(self):
         financials = {
