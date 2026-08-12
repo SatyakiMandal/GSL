@@ -83,6 +83,29 @@ class TestIncidentMechanismParagraph:
             assert category in _EVENT_MECHANISM
 
 
+class TestStalenessCaveat:
+    """The CAR/persistence paragraph gains a trailing caveat when the day's
+    coverage was notably a rehash of prior stories (Tetlock, 2011) - see
+    ceia/staleness.py and narrative.STALENESS_NOTABLE."""
+
+    def test_high_staleness_adds_a_caveat_sentence(self):
+        incident = make_incident(mean_staleness=0.5)
+        paragraphs = incident_narrative(incident, "Testco", "*NSEI", (-1, 3))
+        car_paragraph = paragraphs[-1]
+        assert "closely echoed stories from the preceding days" in car_paragraph
+        assert "0.50" in car_paragraph
+
+    def test_low_staleness_adds_no_caveat(self):
+        incident = make_incident(mean_staleness=0.05)
+        paragraphs = incident_narrative(incident, "Testco", "*NSEI", (-1, 3))
+        assert "closely echoed" not in paragraphs[-1]
+
+    def test_missing_staleness_adds_no_caveat(self):
+        incident = make_incident(mean_staleness=None)
+        paragraphs = incident_narrative(incident, "Testco", "*NSEI", (-1, 3))
+        assert "closely echoed" not in paragraphs[-1]
+
+
 class TestDropExplanation:
     def test_no_diagnostics_returns_empty_string(self):
         assert _drop_explanation(None, candidates=1) == ""

@@ -26,6 +26,12 @@ _BANDS = [
     (2.0, "a large"), (1.0, "a moderate"), (0.0, "a modest"),
 ]
 
+# Above this mean staleness score (see ceia/staleness.py), a day's coverage
+# is called out as notably rehashed rather than left unremarked - chosen as
+# a clear, round cutoff rather than fit to any particular sample, the same
+# footing as this project's other narrative thresholds.
+STALENESS_NOTABLE = 0.35
+
 _EVENT_PHRASES = {
     "earnings": "results or guidance",
     "regulatory": "regulatory or investigative developments",
@@ -273,6 +279,14 @@ def incident_narrative(incident: Incident, company: str, benchmark: str,
             sentence += (
                 " Note that this window ran past the edge of the available price "
                 "series and was truncated, so it covers fewer days than requested."
+            )
+        if incident.mean_staleness is not None and incident.mean_staleness >= STALENESS_NOTABLE:
+            sentence += (
+                f" Much of this day's coverage closely echoed stories from the "
+                f"preceding days (staleness {incident.mean_staleness:.2f} on a 0-1 "
+                f"scale) rather than reporting something new — research on stale "
+                f"financial news finds investors react to it less, but the reaction "
+                f"that does occur is more likely to reverse."
             )
         paragraphs.append(sentence)
 

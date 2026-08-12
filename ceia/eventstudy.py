@@ -63,6 +63,11 @@ class DailyCoverage:
     dominant_emotion: str = ""
     headlines: list[str] = field(default_factory=list)
     after_close_count: int = 0
+    # Mean of unique items' staleness_score this day (see ceia/staleness.py),
+    # None when no unique item that day had a computed score - never 0.0,
+    # which would misleadingly read as "confirmed fresh" rather than
+    # "not assessed."
+    mean_staleness: float | None = None
 
 
 @dataclass
@@ -82,6 +87,7 @@ class Incident:
     volume_z: float
     score: float
     direction_agrees: bool
+    mean_staleness: float | None = None
     car: dict = field(default_factory=dict)
     # One dict per source article behind this flag: source, headline, url,
     # sentiment_label, relevance, and a real summary (the article's own
@@ -162,6 +168,11 @@ def aggregate_by_day(items: list[NewsItem]) -> dict[date, DailyCoverage]:
         emotions = [i.emotion_label for i in unique_items if i.emotion_label]
         if emotions:
             coverage.dominant_emotion = Counter(emotions).most_common(1)[0][0]
+
+        staleness_scores = [i.staleness_score for i in unique_items
+                            if i.staleness_score is not None]
+        if staleness_scores:
+            coverage.mean_staleness = float(np.mean(staleness_scores))
     return by_day
 
 
@@ -199,6 +210,7 @@ def build_daily_table(
             "dominant_event": day_coverage.dominant_event if day_coverage else "",
             "dominant_emotion": day_coverage.dominant_emotion if day_coverage else "",
             "sources": ",".join(day_coverage.sources) if day_coverage else "",
+            "mean_staleness": day_coverage.mean_staleness if day_coverage else None,
         })
     if not rows:
         # A window with no trading days at all (a bad date range, or a holiday
@@ -209,6 +221,7 @@ def build_daily_table(
             "abnormal_return", "abnormal_return_z", "item_count", "unique_count",
             "mean_sentiment", "weighted_sentiment", "dominant_event",
             "dominant_emotion", "sources", "coverage_z", "sentiment_z", "volume_z",
+            "mean_staleness",
         ])
         empty.index.name = "date"
         return empty
@@ -329,6 +342,8 @@ def rank_incidents(
             volume_z=float(row["volume_z"]),
             score=float(score),
             direction_agrees=agrees,
+            mean_staleness=(float(row["mean_staleness"])
+                           if pd.notna(row["mean_staleness"]) else None),
             car=car,
             sources=str(row["sources"]).split(",") if row["sources"] else [],
         ))

@@ -1547,6 +1547,43 @@ must still be deduped as one batch.
 requested range, same as before this phase, useful if a source has since
 republished or corrected an already-cached article.
 
+## Phase 11 — a news staleness signal
+
+A professor's paper-reading assignment (four finance papers on media/price
+dynamics), reviewed for anything directly implementable. Most of the four
+either need data this project doesn't have (order-flow price impact,
+institutional ownership) or operate at a different unit of analysis
+entirely (Lochstoer & Tetlock (2020)'s cash-flow/discount-rate
+decomposition of cross-sectional anomaly portfolios across thousands of
+firms and decades — a different question than a single-company event
+study, and not force-fit here). One finding was both novel and directly
+buildable with data this project already has: Tetlock (2011), "All the News
+That's Fit to Reprint" — a story's *staleness*, its textual similarity to a
+firm's own recent prior coverage, predicts a smaller initial price reaction
+that is more likely to partially reverse, evidence that investors do not
+fully distinguish new information from a rehash of what they already knew.
+
+`ceia/staleness.py` reuses `ceia.dedupe.similarity()` — the same
+headline Jaccard/shingle measure already used for same-day, cross-outlet
+duplicate detection — applied differently: each unique item's staleness
+score is its mean similarity to the ten most recent *prior* unique items in
+the run (chronologically, across days, not just within one), the same
+lookback Tetlock uses. A run is already scoped to one company, so no
+separate firm-matching step is needed the way the original cross-firm study
+needed one. The very first unique item has no prior coverage to compare
+against and is left unscored rather than defaulted to 0.0 — "no prior
+coverage exists" and "compared and found completely novel" are different
+facts.
+
+Shown two ways: a **Staleness** column in the Daily detail table (mean
+score across that day's unique items, 0–1), and — only when a flagged
+incident day's coverage crosses a notable-staleness threshold — a trailing
+caveat sentence in that incident's own CAR/persistence paragraph, naming
+the research finding without claiming it explains that specific day's
+reversal (the same "coincidence, not causation" discipline every other
+narrative sentence in this project follows). Descriptive context throughout
+— never fed into which days get flagged as candidate incidents.
+
 ## Reusing the collected corpus
 
 `data/adani_wide_2023.json` holds the 137-item Adani corpus from the validation

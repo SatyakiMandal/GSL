@@ -28,6 +28,7 @@ from . import align, dedupe, eventstudy, news_cache, returns
 from . import financials as financials_mod
 from . import macro as macro_mod
 from . import nifty as nifty_mod
+from . import staleness as staleness_mod
 from .fetcher import DEFAULT_USER_AGENT, Fetcher
 from .ingest import DEFAULT_SOURCES, IngestResult, run as run_ingest
 from .models import NewsItem, RunConfig
@@ -219,6 +220,13 @@ def analyse(
         config.ticker, config.benchmark, config.start, config.end,
         lead_in_days=lead_in_days, providers=providers,
     )
+
+    # Staleness only needs published_at/headline/duplicate_of, all already
+    # set by ingestion - no dependency on prices, so this can run before or
+    # after the calendar is built. Placed here so it always runs exactly
+    # once regardless of which of the three paths (news cache, --news reuse,
+    # --skip-news-cache) produced ``items``.
+    staleness_mod.score_items(items)
 
     # Real exchange calendar, now that prices are in hand.
     calendar = returns.trading_days(frame)

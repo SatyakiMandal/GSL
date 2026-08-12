@@ -490,6 +490,41 @@ class TestHtmlReport:
         assert body.count("<tr") >= 3
 
 
+class TestDailyTableStaleness:
+    """The Staleness column (Tetlock, 2011) - added to the daily table only
+    when the analysis actually carries mean_staleness data, matching the
+    Volume/secondary-benchmark columns' own opt-in pattern."""
+
+    def test_no_staleness_column_when_data_absent(self):
+        html = build_html(make_analysis())
+        body = html.split("<h2>Daily detail</h2>")[1]
+        assert "<th>Staleness</th>" not in body
+
+    def test_staleness_column_shown_when_data_present(self):
+        days = pd.to_datetime(["2023-01-24", "2023-01-25", "2023-01-27"])
+        frame = pd.DataFrame({
+            "close": [3400.0, 2930.0, 2400.0],
+            "return": [np.nan, -0.138, -0.181],
+            "benchmark_return": [np.nan, -0.005, -0.003],
+            "expected_return": [np.nan, -0.006, -0.004],
+            "abnormal_return": [0.0, -0.132, -0.178],
+            "abnormal_return_z": [0.0, -12.5, -16.9],
+            "item_count": [2, 3, 3], "unique_count": [2, 3, 3],
+            "mean_sentiment": [-0.01, -0.22, -0.39],
+            "weighted_sentiment": [-0.01, -0.22, -0.39],
+            "dominant_event": ["other", "regulatory", "regulatory"],
+            "sources": ["et", "et,bl", "bl"],
+            "coverage_z": [-0.5, 0.3, 0.3], "sentiment_z": [0.9, -0.2, -0.8],
+            "mean_staleness": [np.nan, 0.42, np.nan],
+        }, index=days)
+        frame.index.name = "date"
+        html = build_html(make_analysis(daily=frame))
+        body = html.split("<h2>Daily detail</h2>")[1]
+        assert "<th>Staleness</th>" in body
+        assert "<td>0.42</td>" in body
+        assert body.count("<td>—</td>") >= 2  # the two undated/no-news rows
+
+
 class TestMacroSection:
     def test_no_macro_data_renders_no_section(self):
         html = build_html(make_analysis())

@@ -94,6 +94,12 @@ class NewsItem:
     content_sha256: str = ""
     duplicate_of: str | None = None
 
+    # Set by ceia.staleness - mean headline similarity to this company's most
+    # recent prior unique stories (Tetlock (2011)'s staleness measure). None
+    # when undated, a marked duplicate, or the earliest unique item in the
+    # run (no prior coverage to compare against) - see ceia/staleness.py.
+    staleness_score: float | None = None
+
     @property
     def text_for_scoring(self) -> str:
         """Headline plus body; the headline is what most drives sentiment."""

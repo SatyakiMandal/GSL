@@ -173,6 +173,30 @@ class TestAggregation:
         assert coverage.after_close_count == 1
 
 
+class TestAggregationStaleness:
+    def test_mean_staleness_averages_over_scored_unique_items(self):
+        day = date(2023, 1, 25)
+        a = item(day, -0.5, url="a")
+        b = item(day, -0.5, url="b")
+        a.staleness_score = 0.2
+        b.staleness_score = 0.6
+        coverage = aggregate_by_day([a, b])[day]
+        assert coverage.mean_staleness == pytest.approx(0.4)
+
+    def test_no_scored_items_leaves_mean_staleness_none(self):
+        day = date(2023, 1, 25)
+        coverage = aggregate_by_day([item(day, -0.5, url="a")])[day]
+        assert coverage.mean_staleness is None
+
+    def test_unscored_duplicate_does_not_pull_the_mean_toward_none(self):
+        day = date(2023, 1, 25)
+        survivor = item(day, -0.5, url="a")
+        survivor.staleness_score = 0.5
+        dup = item(day, -0.5, url="b", duplicate_of="a")  # duplicates never scored
+        coverage = aggregate_by_day([survivor, dup])[day]
+        assert coverage.mean_staleness == pytest.approx(0.5)
+
+
 class TestDailyTable:
     def _setup(self):
         days = [date(2023, 1, d) for d in (23, 24, 25, 27, 30)]
@@ -211,6 +235,14 @@ class TestDailyTable:
                                   date(2024, 1, 1), date(2024, 1, 5))
         assert table.empty
 
+    def test_mean_staleness_column_present_and_nullable(self):
+        frame, news, days = self._setup()
+        for n in news:
+            n.staleness_score = 0.7
+        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
+        assert table.loc[days[2], "mean_staleness"] == pytest.approx(0.7)
+        assert pd.isna(table.loc[days[1], "mean_staleness"])  # no news that day
+
 
 class TestRanking:
     def _setup(self):
@@ -235,6 +267,20 @@ class TestRanking:
         top = rank_incidents(table, frame, return_threshold=1.0)[0]
         assert top.direction_agrees, "negative tone with a negative abnormal return"
         assert top.mean_sentiment < 0 and top.abnormal_return < 0
+
+    def test_mean_staleness_propagates_onto_the_incident(self):
+        frame, table, news, days = self._setup()
+        for n in news:
+            if n.trading_day == days[2]:
+                n.staleness_score = 0.8
+        table = build_daily_table(frame, aggregate_by_day(news), days[0], days[-1])
+        top = rank_incidents(table, frame, return_threshold=1.0)[0]
+        assert top.mean_staleness == pytest.approx(0.8)
+
+    def test_mean_staleness_is_none_when_not_available(self):
+        frame, table, news, days = self._setup()
+        top = rank_incidents(table, frame, return_threshold=1.0)[0]
+        assert top.mean_staleness is None
 
     def test_dominant_emotion_propagates_onto_the_incident(self):
         days = [date(2023, 1, d) for d in (23, 24, 25, 27, 30)]

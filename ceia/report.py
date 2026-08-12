@@ -355,12 +355,20 @@ def _volume_cell(row: pd.Series) -> str:
     return f"<td>{float(volume):,.0f}{z_part}</td>"
 
 
+def _staleness_cell(row: pd.Series) -> str:
+    staleness = row.get("mean_staleness")
+    if staleness is None or pd.isna(staleness):
+        return "<td>—</td>"
+    return f"<td>{float(staleness):.2f}</td>"
+
+
 def _daily_table(daily: pd.DataFrame, incident_days: set[date],
                  secondary_ticker: str | None = None) -> str:
     if daily.empty:
         return '<p class="empty">No trading days in the analysis window.</p>'
     has_volume = "volume" in daily.columns
     has_secondary = secondary_ticker and "secondary_abnormal_return" in daily.columns
+    has_staleness = "mean_staleness" in daily.columns
     rows = []
     for day, row in daily.iterrows():
         # pandas Timestamp subclasses date, so an isinstance guard would leave
@@ -386,16 +394,18 @@ def _daily_table(daily: pd.DataFrame, incident_days: set[date],
             + f"<td>{int(row['unique_count'])}</td>"
             f"<td class=\"{_cls(row['weighted_sentiment'])}\">"
             f"{float(row['weighted_sentiment']):+.2f}</td>"
-            f"<td class=\"txt\">{escape(str(row['dominant_event'] or '—'))}</td></tr>"
+            + (_staleness_cell(row) if has_staleness else "")
+            + f"<td class=\"txt\">{escape(str(row['dominant_event'] or '—'))}</td></tr>"
         )
     volume_header = "<th>Volume</th>" if has_volume else ""
     secondary_header = (f"<th>Abnormal vs {escape(secondary_ticker)}</th>"
                         if has_secondary else "")
+    staleness_header = "<th>Staleness</th>" if has_staleness else ""
     return (
         '<div class="scroll"><table><thead><tr>'
         "<th>Date</th><th>Close</th><th>Return</th><th>Benchmark</th>"
         f"<th>Abnormal</th><th>z</th>{secondary_header}{volume_header}"
-        "<th>Items</th><th>Tone</th>"
+        f"<th>Items</th><th>Tone</th>{staleness_header}"
         '<th class="txt">Main topic</th></tr></thead><tbody>'
         + "".join(rows) + "</tbody></table></div>"
     )
@@ -662,7 +672,12 @@ stock, not evidence either one drove the other.</p>
 {_incident_sections(incidents, safe_company, safe_benchmark, config.event_window, getattr(analysis, "nifty_indices", {}) or {})}
 
 <h2>Daily detail</h2>
-<p>Every trading day in the window. Highlighted rows are flagged days.</p>
+<p>Every trading day in the window. Highlighted rows are flagged days.
+<em>Staleness</em> is this day's coverage's average textual similarity to
+this company's own most recent prior stories (0 = entirely new content, 1 =
+a near-exact rehash) — high staleness is associated in the literature with
+a smaller, more easily reversed price reaction (Tetlock, 2011); it is
+descriptive context, never part of the flagging test.</p>
 {_daily_table(daily_display, incident_days, secondary_ticker)}
 
 {unattributed}
