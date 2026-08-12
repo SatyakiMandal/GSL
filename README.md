@@ -1505,6 +1505,48 @@ scoped to the report's own date window — labelled with its actual date and
 a link back to the screener.in page it came from, so a reader can verify it
 directly. `--skip-financials` skips the fetch entirely.
 
+## Phase 10 — a per-company news cache
+
+News scraping is by far the slowest, most rate-limited part of this
+pipeline — a single month of Economic Times sitemaps alone is ~13,000
+URLs, and `--skip-slug-prefilter` on a full window can mean fetching full
+text for 30,000+ candidates. Re-running the same company with an
+overlapping or extended date range used to mean re-crawling everything
+from scratch every time.
+
+`ceia/news_cache.py` fixes that: each `python -m ceia.analyze` run (unless
+`--news` or `--skip-news-cache` is passed) reads and writes a per-company
+cache under `--news-cache-dir` (default `data/news_cache/`), one JSON file
+per company keyed by a slugified `--company` — so consistent spelling
+matters, the same way consistent `--alias` usage already does elsewhere in
+this project.
+
+**Scope, confirmed with the user before building:** only news items are
+cached, not prices, macro, Nifty, or financials. Those are either cheap
+(a handful of API calls, not thousands of page fetches) or are "latest
+snapshot" values — a G-Sec yield, a NOPAT — that would go stale if served
+from a cache keyed by an unrelated date range, so they're always fetched
+fresh.
+
+**Gap-fill, not exact-subset matching:** a requested date range is split
+into the sub-ranges not already covered by a prior run for this company,
+and only those sub-ranges are crawled — a run for 1–31 March followed by a
+run for 20 March–10 April only crawls 1–10 April, reusing the cached
+20–31 March items. Each cached range is tagged with the exact source list
+used to build it; a later request whose sources aren't a subset of what
+was cached treats that range as a gap again too, rather than silently
+missing a newly-added source's coverage of days already on disk. Article
+identity is the URL: a fresh crawl of a day that was previously cached
+under a narrower source list replaces (not merges with) the stale entries,
+and near-duplicate detection (`ceia/dedupe.py`) is re-run across the
+combined cached + freshly-crawled batch, since it compares items sharing a
+publication day and a day now split across a cache hit and a fresh crawl
+must still be deduped as one batch.
+
+`--skip-news-cache` bypasses all of this — a full re-crawl of the whole
+requested range, same as before this phase, useful if a source has since
+republished or corrected an already-cached article.
+
 ## Reusing the collected corpus
 
 `data/adani_wide_2023.json` holds the 137-item Adani corpus from the validation

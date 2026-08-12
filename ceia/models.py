@@ -113,6 +113,21 @@ class NewsItem:
         record["trading_day"] = self.trading_day.isoformat() if self.trading_day else None
         return record
 
+    @classmethod
+    def from_dict(cls, record: dict[str, Any]) -> "NewsItem":
+        """Inverse of :meth:`to_dict` - shared by the ``--news`` file loader
+        and the per-company news cache so the two don't drift apart.
+        ``trading_day`` is dropped rather than parsed back: it depends on
+        the trading calendar, recomputed fresh by ``align.attribute_all``
+        after prices are loaded, not carried across a save/reload."""
+        record = dict(record)
+        published = record.pop("published_at", None)
+        record.pop("trading_day", None)
+        item = cls(**record)
+        if published:
+            item.published_at = datetime.fromisoformat(published)
+        return item
+
 
 @dataclass
 class RunConfig:

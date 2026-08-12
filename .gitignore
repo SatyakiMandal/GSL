@@ -13,5 +13,9 @@ docs/phase0-*.json
 data/prices/*.csv
 out/
 
+# Per-company cached news items (see ceia/news_cache.py) - a run artefact,
+# not source-controlled content.
+data/news_cache/
+
 # The news fixture in data/ is committed deliberately (bodies stripped).
 !data/adani_wide_2023.json

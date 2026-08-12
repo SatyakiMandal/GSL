@@ -18,13 +18,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
 
-from . import align, eventstudy, returns
+from . import align, dedupe, eventstudy, news_cache, returns
 from . import financials as financials_mod
 from . import macro as macro_mod
 from . import nifty as nifty_mod
@@ -116,17 +116,88 @@ class Analysis:
 def load_news_from_file(path: Path) -> tuple[list[NewsItem], dict]:
     """Rehydrate a Phase 1 run, so an analysis can be re-run without re-scraping."""
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    items = []
-    for record in payload.get("items", []):
-        record = dict(record)
-        published = record.pop("published_at", None)
-        record.pop("trading_day", None)
-        item = NewsItem(**record)
-        if published:
-            item.published_at = pd.Timestamp(published).to_pydatetime()
-        items.append(item)
+    items = [NewsItem.from_dict(record) for record in payload.get("items", [])]
     meta = {k: v for k, v in payload.items() if k != "items"}
     return items, meta
+
+
+def ingest_with_cache(
+    config: RunConfig, fetcher: Fetcher, cache_dir: Path,
+    limit: int | None = None, max_workers: int = 8,
+    skip_alias_widening: bool = False, skip_slug_prefilter: bool = False,
+) -> tuple[list[NewsItem], dict]:
+    """Cache-aware wrapper around :func:`ceia.ingest.run` (see
+    ``ceia/news_cache.py``'s module docstring): crawls only the date
+    sub-ranges not already cached for this company under the requested
+    source list, then combines the freshly-crawled items with whatever was
+    already cached for the rest of the window.
+
+    ``news_meta``'s ``stats`` are recomputed from the final combined item
+    list rather than summed across per-gap ``IngestResult``s, since a
+    per-gap ``unique_after_dedupe``/``duplicates`` split would not reflect
+    dedup run across the *combined* batch. The other, purely informational
+    fields (``source_status``, ``per_source``, ``aliases_used``,
+    ``disabled_sources``) are merged across whichever gaps were actually
+    crawled - empty/absent for a fully cache-satisfied run, same as this
+    project's other external-data sections degrade when there is nothing
+    to report.
+    """
+    sources = tuple(sorted(config.sources or DEFAULT_SOURCES))
+    cache = news_cache.load(config.company, cache_dir)
+    gaps = news_cache.compute_gaps(config.start, config.end, cache.segments, sources)
+
+    new_items: list[NewsItem] = []
+    source_status: dict[str, str] = {}
+    disabled_sources: dict[str, str] = {}
+    per_source: dict[str, int] = {}
+    aliases_used: list[str] = []
+    for gap_start, gap_end in gaps:
+        gap_config = replace(config, start=gap_start, end=gap_end)
+        ingested = run_ingest(gap_config, fetcher=fetcher, limit=limit,
+                              max_workers=max_workers,
+                              skip_alias_widening=skip_alias_widening,
+                              skip_slug_prefilter=skip_slug_prefilter)
+        new_items.extend(ingested.items)
+        source_status.update(ingested.source_status)
+        disabled_sources.update(ingested.disabled_sources)
+        for key, count in ingested.per_source.items():
+            per_source[key] = per_source.get(key, 0) + count
+        for alias in ingested.aliases_used:
+            if alias not in aliases_used:
+                aliases_used.append(alias)
+
+    cached_items = news_cache.cached_items_in_window(cache, config.start, config.end, gaps)
+    cached_days = {i.published_at.date() for i in cached_items if i.published_at}
+    news_cache.save_after_gaps(cache, gaps, sources, new_items, cache_dir)
+
+    items = cached_items + new_items
+    dedupe.deduplicate(items)
+    unique_items = dedupe.unique(items)
+    log.info("news cache: %d gap range(s) crawled (%d new item(s)), %d cached "
+             "item(s) reused from %d day(s) for %s [%s to %s]",
+             len(gaps), len(new_items), len(cached_items), len(cached_days),
+             config.company, config.start, config.end)
+
+    news_meta = {
+        "company": config.company, "ticker": config.ticker, "benchmark": config.benchmark,
+        "start": config.start.isoformat(), "end": config.end.isoformat(),
+        "aliases": aliases_used or config.all_aliases,
+        "source_status": source_status,
+        "disabled_sources": disabled_sources,
+        "per_source": per_source,
+        "stats": {
+            "unique_after_dedupe": len(unique_items),
+            "duplicates": len(items) - len(unique_items),
+            "paywalled": sum(1 for i in items if i.paywalled),
+            "missing_timestamp": sum(1 for i in items if i.timestamp_confidence == "missing"),
+            "after_close": sum(1 for i in items if i.after_close),
+        },
+        "news_cache": {
+            "gaps_crawled": [[g[0].isoformat(), g[1].isoformat()] for g in gaps],
+            "cached_days_reused": len(cached_days),
+        },
+    }
+    return items, news_meta
 
 
 def analyse(
@@ -522,6 +593,16 @@ def main() -> None:
                         help="Don't fetch revenue/expense/NOPAT/order-book "
                              "fundamentals from screener.in (see README "
                              "Phase 9).")
+    parser.add_argument("--news-cache-dir", default="data/news_cache",
+                        help="Where each company's cached news items are "
+                             "stored (see README Phase 10). Ignored with "
+                             "--news or --skip-news-cache.")
+    parser.add_argument("--skip-news-cache", action="store_true",
+                        help="Live scraping only. Always re-crawl the full "
+                             "requested date range and don't read from or "
+                             "write to the per-company news cache. Use this "
+                             "if you suspect a source has since republished "
+                             "or corrected an already-cached article.")
     parser.add_argument("--price-csv", default=None,
                         help="Directory of <SYMBOL>.csv files; forces the CSV provider.")
     parser.add_argument("--api-key", default=None,
@@ -572,12 +653,18 @@ def main() -> None:
         log.info("loaded %d items from %s", len(items), args.news)
     else:
         fetcher = Fetcher(cache_dir=args.cache_dir, user_agent=args.user_agent)
-        ingested: IngestResult = run_ingest(config, fetcher=fetcher, limit=args.limit,
-                                            max_workers=args.workers,
-                                            skip_alias_widening=args.skip_alias_widening,
-                                            skip_slug_prefilter=args.skip_slug_prefilter)
-        items, news_meta = ingested.items, ingested.to_dict()
-        news_meta.pop("items", None)
+        if args.skip_news_cache:
+            ingested: IngestResult = run_ingest(config, fetcher=fetcher, limit=args.limit,
+                                                max_workers=args.workers,
+                                                skip_alias_widening=args.skip_alias_widening,
+                                                skip_slug_prefilter=args.skip_slug_prefilter)
+            items, news_meta = ingested.items, ingested.to_dict()
+            news_meta.pop("items", None)
+        else:
+            items, news_meta = ingest_with_cache(
+                config, fetcher, Path(args.news_cache_dir), limit=args.limit,
+                max_workers=args.workers, skip_alias_widening=args.skip_alias_widening,
+                skip_slug_prefilter=args.skip_slug_prefilter)
 
     providers = None
     if args.price_csv:
