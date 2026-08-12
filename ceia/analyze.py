@@ -55,6 +55,8 @@ class Analysis:
     caveats: list[str] = field(default_factory=list)
     unattributed: list[NewsItem] = field(default_factory=list)
     correlation: dict = field(default_factory=dict)
+    extremity_volume_correlation: dict = field(default_factory=dict)
+    lagged_correlation: dict = field(default_factory=dict)
     emotion_summary: dict = field(default_factory=dict)
     secondary_daily: pd.DataFrame | None = None
     secondary_meta: dict = field(default_factory=dict)
@@ -97,6 +99,8 @@ class Analysis:
             "news": self.news_meta,
             "caveats": self.caveats,
             "sentiment_return_correlation": self.correlation,
+            "sentiment_extremity_volume_correlation": self.extremity_volume_correlation,
+            "lagged_sentiment_return_correlation": self.lagged_correlation,
             "emotion_return_summary": self.emotion_summary,
             "secondary_benchmark": secondary,
             "threshold_robustness": self.robustness,
@@ -243,6 +247,8 @@ def analyse(
     )
     eventstudy.attach_headlines(incidents, items)
     correlation = eventstudy.sentiment_return_correlation(table)
+    extremity_volume_correlation = eventstudy.sentiment_extremity_volume_correlation(table)
+    lagged_correlation = eventstudy.lagged_sentiment_return_correlation(table)
     emotion_summary = eventstudy.emotion_valence_summary(table)
     robustness = eventstudy.robustness_check(
         table, frame, incidents, config.event_window,
@@ -326,6 +332,8 @@ def analyse(
                                    price_meta.get("ar_scale_source", "")),
         unattributed=align.unattributed(items),
         correlation=correlation,
+        extremity_volume_correlation=extremity_volume_correlation,
+        lagged_correlation=lagged_correlation,
         emotion_summary=emotion_summary,
         secondary_daily=secondary_daily,
         secondary_meta=secondary_meta,
@@ -375,6 +383,18 @@ def _print(analysis: Analysis) -> None:
               f"(R2={corr['r_squared']:.3f}, n={corr['n']}) — {corr['note']}")
     elif corr:
         print(f"Sentiment/return correlation: not computed — {corr.get('note', '')}")
+
+    extremity = analysis.extremity_volume_correlation
+    if extremity.get("r") is not None:
+        print(f"Sentiment extremity/volume correlation: r={extremity['r']:+.3f} "
+              f"(n={extremity['n']}) — Tetlock (2007): unusually high or low "
+              f"tone predicts high volume")
+
+    lagged = analysis.lagged_correlation.get("horizons") or {}
+    for h, result in sorted(lagged.items()):
+        if result.get("r") is not None:
+            print(f"Sentiment -> return {h} day(s) later: r={result['r']:+.3f} "
+                  f"(n={result['n']})")
 
     groups = analysis.emotion_summary.get("groups") or {}
     if groups:

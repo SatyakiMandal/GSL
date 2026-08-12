@@ -509,6 +509,118 @@ def sentiment_return_correlation(table: pd.DataFrame) -> dict:
     }
 
 
+def sentiment_extremity_volume_correlation(table: pd.DataFrame) -> dict:
+    """Pearson correlation between sentiment *extremity* (|tone|, either
+    direction) and trading volume's own z-score.
+
+    Tetlock (2007)'s second finding, distinct from the signed correlation
+    above: unusually high *or* low media pessimism predicts high trading
+    volume - a noise/liquidity-trader signature (divergent beliefs driving
+    more trades), not a claim about which direction sentiment points.
+    Testing |sentiment| rather than signed sentiment is the point; folding
+    this into sentiment_return_correlation would test the wrong thing.
+    Same descriptive-only caveats as that stat.
+    """
+    if "volume_z" not in table.columns:
+        return {"n": 0, "r": None, "r_squared": None,
+                "note": "no volume data available for this run."}
+    covered = table[table["unique_count"] > 0] if len(table) else table
+    covered = covered.dropna(subset=["weighted_sentiment", "volume_z"])
+    n = len(covered)
+    if n < 3:
+        return {
+            "n": n, "r": None, "r_squared": None,
+            "note": (f"only {n} news-carrying day(s) with usable volume data "
+                     "- too few to compute a meaningful correlation (need at "
+                     "least 3)."),
+        }
+    extremity = covered["weighted_sentiment"].abs().to_numpy(dtype=float)
+    volume_z = covered["volume_z"].to_numpy(dtype=float)
+    if np.std(extremity) == 0 or np.std(volume_z) == 0:
+        return {
+            "n": n, "r": None, "r_squared": None,
+            "note": ("sentiment extremity or volume has zero variance across "
+                     "covered days - correlation is undefined."),
+        }
+    r = float(np.corrcoef(extremity, volume_z)[0, 1])
+    return {
+        "n": n, "r": round(r, 4), "r_squared": round(r * r, 4),
+        "note": (f"Pearson r over {n} news-carrying day(s) between "
+                 "|sentiment| and volume's own z-score; descriptive only, "
+                 "not a significance test."),
+    }
+
+
+def lagged_sentiment_return_correlation(
+    table: pd.DataFrame, horizons: tuple[int, ...] = (1, 5),
+) -> dict:
+    """Correlation between day t's sentiment and day t+h's abnormal return,
+    for each horizon h in ``horizons`` - a predictive counterpart to
+    :func:`sentiment_return_correlation`'s same-day (contemporaneous) test.
+
+    Tetlock (2007)'s first finding: high media pessimism predicts a
+    short-horizon negative move followed by reversion at a longer horizon.
+    Reported here as two lagged correlations (typically 1 and 5 trading
+    days out) rather than a single reversal metric, so a reader sees the
+    actual pattern - the paper's finding would show up as a positive r at
+    the short horizon (low sentiment -> low next-day return) turning
+    negative or shrinking at the longer one, not as one number claiming to
+    prove reversion happened. Descriptive only, like every correlation in
+    this module - not a trading signal and not a significance test, and
+    especially not one over the handful of non-overlapping windows a
+    typical run's length allows for the longer horizon.
+    """
+    results: dict[int, dict] = {}
+    if table.empty:
+        for h in horizons:
+            results[h] = {"n": 0, "r": None, "r_squared": None,
+                          "note": "no daily table to correlate."}
+        return {"horizons": results}
+
+    sentiment_days = table[table["unique_count"] > 0]
+    for h in horizons:
+        # Pair each news-carrying day's sentiment with the abnormal return
+        # h trading days later, by position in the table's own trading-day
+        # index - not by calendar date, so weekends/holidays don't silently
+        # shift which day "h days out" actually means.
+        positions = {day: pos for pos, day in enumerate(table.index)}
+        pairs = []
+        for day, row in sentiment_days.iterrows():
+            target_pos = positions[day] + h
+            if target_pos >= len(table):
+                continue
+            future_return = table.iloc[target_pos]["abnormal_return"]
+            if pd.notna(row["weighted_sentiment"]) and pd.notna(future_return):
+                pairs.append((float(row["weighted_sentiment"]), float(future_return)))
+        n = len(pairs)
+        if n < 3:
+            results[h] = {
+                "n": n, "r": None, "r_squared": None,
+                "note": (f"only {n} news-carrying day(s) with a return {h} "
+                         "trading day(s) later inside this window - too few "
+                         "to compute a meaningful correlation (need at "
+                         "least 3)."),
+            }
+            continue
+        sentiment = np.array([p[0] for p in pairs])
+        future = np.array([p[1] for p in pairs])
+        if np.std(sentiment) == 0 or np.std(future) == 0:
+            results[h] = {
+                "n": n, "r": None, "r_squared": None,
+                "note": ("sentiment or the later return has zero variance "
+                         "across covered days - correlation is undefined."),
+            }
+            continue
+        r = float(np.corrcoef(sentiment, future)[0, 1])
+        results[h] = {
+            "n": n, "r": round(r, 4), "r_squared": round(r * r, 4),
+            "note": (f"Pearson r over {n} pair(s) of (day t sentiment, day "
+                     f"t+{h} abnormal return); descriptive only, not a "
+                     "significance test."),
+        }
+    return {"horizons": results}
+
+
 def emotion_valence_summary(table: pd.DataFrame) -> dict:
     """Mean abnormal return per GoEmotions sentiment group (PRD-adjacent extra).
 

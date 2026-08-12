@@ -1547,21 +1547,23 @@ must still be deduped as one batch.
 requested range, same as before this phase, useful if a source has since
 republished or corrected an already-cached article.
 
-## Phase 11 — a news staleness signal
+## Phase 11 — a professor's paper-reading assignment
 
-A professor's paper-reading assignment (four finance papers on media/price
-dynamics), reviewed for anything directly implementable. Most of the four
-either need data this project doesn't have (order-flow price impact,
-institutional ownership) or operate at a different unit of analysis
-entirely (Lochstoer & Tetlock (2020)'s cash-flow/discount-rate
-decomposition of cross-sectional anomaly portfolios across thousands of
-firms and decades — a different question than a single-company event
-study, and not force-fit here). One finding was both novel and directly
-buildable with data this project already has: Tetlock (2011), "All the News
-That's Fit to Reprint" — a story's *staleness*, its textual similarity to a
-firm's own recent prior coverage, predicts a smaller initial price reaction
-that is more likely to partially reverse, evidence that investors do not
-fully distinguish new information from a rehash of what they already knew.
+Four finance papers on media/price dynamics, reviewed for anything directly
+implementable. Two either need data this project doesn't have (order-flow
+price impact, institutional ownership - Tetlock (2010)) or operate at a
+different unit of analysis entirely (Lochstoer & Tetlock (2020)'s
+cash-flow/discount-rate decomposition of cross-sectional anomaly portfolios
+across thousands of firms and decades — a different question than a
+single-company event study, and not force-fit here). The other two were
+both novel and directly buildable with data this project already has.
+
+### Staleness (Tetlock, 2011, "All the News That's Fit to Reprint")
+
+A story's *staleness*, its textual similarity to a firm's own recent prior
+coverage, predicts a smaller initial price reaction that is more likely to
+partially reverse, evidence that investors do not fully distinguish new
+information from a rehash of what they already knew.
 
 `ceia/staleness.py` reuses `ceia.dedupe.similarity()` — the same
 headline Jaccard/shingle measure already used for same-day, cross-outlet
@@ -1583,6 +1585,30 @@ the research finding without claiming it explains that specific day's
 reversal (the same "coincidence, not causation" discipline every other
 narrative sentence in this project follows). Descriptive context throughout
 — never fed into which days get flagged as candidate incidents.
+
+### Two more correlations (Tetlock, 2007, "Giving Content to Investor Sentiment")
+
+This paper's core finding — high media pessimism predicts a short-horizon
+negative price move followed by reversion at a longer horizon, and
+unusually high *or* low pessimism (extremity in either direction) predicts
+high trading volume — adds two more descriptive correlations alongside the
+existing same-day sentiment/return correlation in `ceia/eventstudy.py`:
+
+- **`sentiment_extremity_volume_correlation()`** — Pearson r between
+  `|weighted_sentiment|` and that day's volume z-score. Deliberately tests
+  extremity, not direction: folding this into the signed correlation
+  would test the wrong thing.
+- **`lagged_sentiment_return_correlation()`** — Pearson r between day t's
+  sentiment and day t+h's abnormal return, reported at two horizons
+  (1 and 5 trading days by default) rather than collapsed into one
+  "reversal" number, so a reader sees the actual pattern the paper
+  describes — the short horizon flipping sign or shrinking at the longer
+  one — instead of a single metric claiming to have proven it.
+
+Both are purely descriptive, shown as extra stat cards in the report's
+Summary section only when there's enough data to compute them (the same
+"only shown when meaningful" pattern the secondary-benchmark beta card
+already uses) — never fed into candidate-day flagging.
 
 ## Reusing the collected corpus
 

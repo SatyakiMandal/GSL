@@ -581,6 +581,19 @@ def build_html(analysis) -> str:
     corr_display = (f"r = {correlation['r']:+.3f}"
                     if correlation.get("r") is not None else "n/a")
 
+    extremity_corr = getattr(analysis, "extremity_volume_correlation", {}) or {}
+    extremity_stats = (
+        [_stat("Sentiment extremity/volume correlation",
+              f"r = {extremity_corr['r']:+.3f}")]
+        if extremity_corr.get("r") is not None else []
+    )
+    lagged_horizons = (getattr(analysis, "lagged_correlation", {}) or {}).get("horizons") or {}
+    lagged_stats = [
+        _stat(f"Sentiment → return {h}d later", f"r = {result['r']:+.3f}")
+        for h, result in sorted(lagged_horizons.items())
+        if result.get("r") is not None
+    ]
+
     secondary_meta = getattr(analysis, "secondary_meta", {}) or {}
     secondary_daily = getattr(analysis, "secondary_daily", None)
     secondary_ticker = secondary_meta.get("ticker") if secondary_daily is not None else None
@@ -596,7 +609,8 @@ def build_html(analysis) -> str:
         _stat("Beta", f"{price.get('beta', float('nan')):.2f}"),
         _stat("Published after close", str(news_stats.get("after_close", 0))),
         _stat("Sentiment/return correlation", corr_display),
-    ] + ([_stat(f"Beta vs {secondary_ticker}", f"{secondary_meta.get('beta', float('nan')):.2f}")]
+    ] + extremity_stats + lagged_stats
+    + ([_stat(f"Beta vs {secondary_ticker}", f"{secondary_meta.get('beta', float('nan')):.2f}")]
         if secondary_ticker and secondary_meta.get("beta") is not None else []))
 
     unattributed = ""

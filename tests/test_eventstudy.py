@@ -20,8 +20,10 @@ from ceia.eventstudy import (  # noqa: E402
     caveats,
     emotion_valence_summary,
     flagging_diagnostics,
+    lagged_sentiment_return_correlation,
     rank_incidents,
     robustness_check,
+    sentiment_extremity_volume_correlation,
     sentiment_return_correlation,
 )
 from ceia.extract import IST  # noqa: E402
@@ -589,6 +591,110 @@ class TestSentimentReturnCorrelation:
         result = sentiment_return_correlation(table)
         assert result["r"] is None
         assert result["n"] == 0
+
+
+class TestSentimentExtremityVolumeCorrelation:
+    """Tetlock (2007)'s second finding: |sentiment| (extremity, either
+    direction) predicts trading volume - distinct from the signed
+    correlation above, which tests direction."""
+
+    def _table(self, rows):
+        """rows: list of (unique_count, weighted_sentiment, volume_z)."""
+        return pd.DataFrame({
+            "unique_count": [r[0] for r in rows],
+            "weighted_sentiment": [r[1] for r in rows],
+            "volume_z": [r[2] for r in rows],
+        })
+
+    def test_extreme_sentiment_either_direction_predicts_volume(self):
+        table = self._table([
+            (1, 0.9, 2.0), (1, -0.9, 1.8), (1, 0.85, 1.9),
+            (1, -0.1, -0.5), (1, 0.05, -0.6), (1, -0.05, -0.4),
+        ])
+        result = sentiment_extremity_volume_correlation(table)
+        assert result["r"] is not None
+        assert result["r"] > 0.7
+
+    def test_no_volume_column_returns_none_not_a_crash(self):
+        table = pd.DataFrame({"unique_count": [1, 1, 1],
+                              "weighted_sentiment": [0.5, -0.5, 0.3]})
+        result = sentiment_extremity_volume_correlation(table)
+        assert result["r"] is None
+        assert "no volume data" in result["note"]
+
+    def test_too_few_covered_days_returns_none(self):
+        table = self._table([(1, 0.5, 1.0), (1, -0.5, 0.8)])
+        result = sentiment_extremity_volume_correlation(table)
+        assert result["r"] is None
+        assert "too few" in result["note"]
+
+    def test_uncovered_days_excluded(self):
+        table = self._table([
+            (0, 0.0, 3.0),  # no news, would be a huge outlier if included
+            (1, 0.9, 2.0), (1, -0.9, 1.9), (1, 0.1, -0.5), (1, -0.05, -0.6),
+        ])
+        result = sentiment_extremity_volume_correlation(table)
+        assert result["n"] == 4
+
+    def test_zero_variance_is_undefined_not_a_crash(self):
+        table = self._table([(1, 0.5, 1.0), (1, -0.5, 1.0), (1, 0.3, 1.0)])
+        result = sentiment_extremity_volume_correlation(table)
+        assert result["r"] is None
+        assert "zero variance" in result["note"]
+
+
+class TestLaggedSentimentReturnCorrelation:
+    """Tetlock (2007)'s first finding: pessimism predicts a short-horizon
+    negative move followed by reversion at a longer horizon."""
+
+    def _table(self, sentiments_and_returns):
+        """sentiments_and_returns: list of (unique_count, weighted_sentiment,
+        abnormal_return), one row per trading day in order."""
+        return pd.DataFrame({
+            "unique_count": [r[0] for r in sentiments_and_returns],
+            "weighted_sentiment": [r[1] for r in sentiments_and_returns],
+            "abnormal_return": [r[2] for r in sentiments_and_returns],
+        })
+
+    def test_short_horizon_predicts_next_day_return(self):
+        # Day t's sentiment tracks day t+1's return almost exactly
+        # (return[t+1] = 0.05 * sentiment[t]) - a clean short-horizon
+        # predictive relationship. row0's return is unused (nothing precedes
+        # it in this table) and can be anything.
+        rows = [(1, 0.9, 0.0), (1, 0.8, 0.045), (1, -0.9, 0.04),
+               (1, -0.8, -0.045), (1, 0.7, -0.04), (1, 0.0, 0.035)]
+        table = self._table(rows)
+        result = lagged_sentiment_return_correlation(table, horizons=(1,))
+        r1 = result["horizons"][1]
+        assert r1["r"] is not None
+        assert r1["r"] > 0.8
+
+    def test_horizon_beyond_table_length_is_dropped_not_crashed(self):
+        rows = [(1, 0.9, 0.0), (1, -0.9, -0.05)]
+        table = self._table(rows)
+        result = lagged_sentiment_return_correlation(table, horizons=(5,))
+        assert result["horizons"][5]["r"] is None
+        assert "too few" in result["horizons"][5]["note"]
+
+    def test_multiple_horizons_computed_independently(self):
+        rows = [(1, 0.9, 0.0), (1, -0.9, -0.05), (1, 0.8, 0.04),
+               (1, -0.8, -0.045), (1, 0.7, 0.035), (1, 0.0, 0.0)]
+        table = self._table(rows)
+        result = lagged_sentiment_return_correlation(table, horizons=(1, 2))
+        assert set(result["horizons"]) == {1, 2}
+
+    def test_uncovered_days_are_not_used_as_the_sentiment_source(self):
+        rows = [(0, 0.0, 0.02), (1, -0.9, -0.05), (1, 0.0, 0.0)]
+        table = self._table(rows)
+        result = lagged_sentiment_return_correlation(table, horizons=(1,))
+        assert result["horizons"][1]["n"] == 1  # only the one news-carrying day
+
+    def test_empty_table_does_not_crash(self):
+        table = pd.DataFrame(columns=["unique_count", "weighted_sentiment",
+                                      "abnormal_return"])
+        result = lagged_sentiment_return_correlation(table, horizons=(1, 5))
+        assert result["horizons"][1]["n"] == 0
+        assert result["horizons"][5]["n"] == 0
 
 
 class TestEmotionValenceSummary:
