@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ceia.charts import index_sparkline_svg, timeline_svg  # noqa: E402
 from ceia.eventstudy import Incident  # noqa: E402
+from ceia.global_markets import GlobalIndexDay, GlobalIndexSeries  # noqa: E402
 from ceia.macro import MacroEvent  # noqa: E402
 from ceia.models import NewsItem, RunConfig  # noqa: E402
 from ceia.nifty import IndexSeries  # noqa: E402
@@ -71,12 +72,13 @@ class FakeAnalysis:
     macro_events: list = field(default_factory=list)
     macro: dict = field(default_factory=dict)
     nifty_indices: dict = field(default_factory=dict)
+    global_indices: dict = field(default_factory=dict)
     financials: dict = field(default_factory=dict)
 
 
 def make_analysis(incidents=None, unattributed=None, daily=None,
                   macro_events=None, macro=None, nifty_indices=None,
-                  financials=None) -> FakeAnalysis:
+                  global_indices=None, financials=None) -> FakeAnalysis:
     days = pd.to_datetime(["2023-01-24", "2023-01-25", "2023-01-27"])
     frame = daily if daily is not None else pd.DataFrame({
         "close": [3400.0, 2930.0, 2400.0],
@@ -114,6 +116,7 @@ def make_analysis(incidents=None, unattributed=None, daily=None,
         macro_events=macro_events or [],
         macro=macro or {},
         nifty_indices=nifty_indices or {},
+        global_indices=global_indices or {},
         financials=financials or {},
     )
 
@@ -705,6 +708,101 @@ class TestIndexBreakdownTable:
     def test_not_shown_when_no_nifty_indices_at_all(self):
         html = build_html(make_analysis(incidents=[make_incident()]))
         assert "How the Nifty indices moved on this same day" not in html
+
+
+class TestGlobalMarketsSection:
+    def test_no_global_market_data_renders_no_section(self):
+        html = build_html(make_analysis())
+        assert "<h2>Global markets</h2>" not in html
+
+    def test_available_index_shows_window_return_and_alignment(self):
+        daily = pd.DataFrame({
+            "close": [100.0, 105.0, 108.0], "return": [0.0, 0.03, 0.04],
+            "level": [100.0, 105.0, 108.0],
+        }, index=pd.to_datetime(["2023-01-24", "2023-01-25", "2023-01-27"]))
+        indices = {"S&P 500": GlobalIndexSeries(
+            name="S&P 500", ticker="^GSPC", provider="csv", daily=daily,
+            window_return=0.08, same_day_available=False)}
+        html = build_html(make_analysis(global_indices=indices))
+        assert "<h2>Global markets</h2>" in html
+        assert "S&amp;P 500" in html
+        assert "^GSPC" in html
+        assert "+8.00%" in html
+        assert "prior trading day" in html
+        assert 'class="spark"' in html
+
+    def test_same_day_available_index_labelled_as_such(self):
+        daily = pd.DataFrame({
+            "close": [100.0], "return": [0.0], "level": [100.0],
+        }, index=pd.to_datetime(["2023-01-24"]))
+        indices = {"Hang Seng": GlobalIndexSeries(
+            name="Hang Seng", ticker="^HSI", provider="csv", daily=daily,
+            window_return=0.0, same_day_available=True)}
+        html = build_html(make_analysis(global_indices=indices))
+        assert "same NSE day" in html
+
+    def test_unavailable_index_is_disclosed_not_hidden(self):
+        indices = {"Nikkei 225": GlobalIndexSeries(
+            name="Nikkei 225", ticker="^N225", note="unavailable: no data returned")}
+        html = build_html(make_analysis(global_indices=indices))
+        assert "Nikkei 225" in html
+        assert "unavailable: no data returned" in html
+
+    def test_moved_with_count_reflects_candidate_day_agreement(self):
+        incident_day = date(2023, 1, 25)
+        daily = pd.DataFrame({
+            "close": [100.0, 90.0], "return": [0.0, -0.10],
+            "benchmark_return": [0.0, -0.02], "abnormal_return": [0.0, -0.08],
+            "abnormal_return_z": [0.0, -8.0], "item_count": [1, 3],
+            "unique_count": [1, 3], "mean_sentiment": [0.0, -0.4],
+            "weighted_sentiment": [0.0, -0.4], "dominant_event": ["other", "regulatory"],
+            "sources": ["et", "et,bl"], "coverage_z": [0.0, 1.2], "sentiment_z": [0.0, -1.0],
+        }, index=[date(2023, 1, 24), incident_day])
+        index_daily = pd.DataFrame({
+            "close": [100.0, 95.0], "return": [0.0, -0.05], "level": [100.0, 95.0],
+        }, index=pd.to_datetime(["2023-01-24", "2023-01-25"]))
+        indices = {"S&P 500": GlobalIndexSeries(
+            name="S&P 500", ticker="^GSPC", provider="csv", daily=index_daily,
+            window_return=-0.05, same_day_available=False,
+            aligned={incident_day: GlobalIndexDay(
+                aligned_date=date(2023, 1, 24), return_=-0.05, return_z=-1.2)})}
+        incident = make_incident(day=incident_day)
+        html = build_html(make_analysis(incidents=[incident], daily=daily,
+                                        global_indices=indices))
+        assert "1/1" in html  # both fell - same sign, one candidate day
+
+
+class TestGlobalMarketBreakdownTable:
+    """The per-incident 'how global markets moved around this day'
+    breakdown - each index's own aligned session, nested under the
+    company's own already-flagged candidate day."""
+
+    def test_shown_when_the_index_has_aligned_data_for_this_day(self):
+        day = date(2023, 1, 25)
+        incident = make_incident(day=day)
+        indices = {"S&P 500": GlobalIndexSeries(
+            name="S&P 500", ticker="^GSPC", provider="csv",
+            same_day_available=False,
+            aligned={day: GlobalIndexDay(
+                aligned_date=date(2023, 1, 24), return_=-0.021, return_z=-2.3)})}
+        html = build_html(make_analysis(incidents=[incident], global_indices=indices))
+        assert "How global markets moved around this day" in html
+        assert "S&amp;P 500" in html
+        assert "-2.10%" in html
+        assert "-2.3" in html
+        assert "prior trading day" in html
+
+    def test_not_shown_when_the_index_has_no_aligned_data_for_this_day(self):
+        day = date(2023, 1, 25)
+        incident = make_incident(day=day)
+        indices = {"S&P 500": GlobalIndexSeries(name="S&P 500", ticker="^GSPC",
+                                                provider="csv", aligned={})}
+        html = build_html(make_analysis(incidents=[incident], global_indices=indices))
+        assert "How global markets moved around this day" not in html
+
+    def test_not_shown_when_no_global_indices_at_all(self):
+        html = build_html(make_analysis(incidents=[make_incident()]))
+        assert "How global markets moved around this day" not in html
 
 
 class TestFinancialsSection:

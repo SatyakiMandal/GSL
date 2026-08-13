@@ -26,6 +26,7 @@ import pandas as pd
 
 from . import align, dedupe, eventstudy, news_cache, returns
 from . import financials as financials_mod
+from . import global_markets as global_markets_mod
 from . import macro as macro_mod
 from . import nifty as nifty_mod
 from . import staleness as staleness_mod
@@ -65,6 +66,7 @@ class Analysis:
     macro_events: list = field(default_factory=list)
     macro: dict = field(default_factory=dict)
     nifty_indices: dict = field(default_factory=dict)
+    global_indices: dict = field(default_factory=dict)
     financials: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -88,6 +90,25 @@ class Analysis:
                 idx_table["date"] = idx_table["date"].astype(str)
                 entry["daily"] = json.loads(idx_table.to_json(orient="records"))
             nifty[name] = entry
+        global_markets = {}
+        for name, index in self.global_indices.items():
+            entry = {
+                "ticker": index.ticker, "provider": index.provider,
+                "same_day_available": index.same_day_available,
+                "window_return": index.window_return, "note": index.note,
+                "aligned": {
+                    day.isoformat(): {
+                        "aligned_date": stats.aligned_date.isoformat(),
+                        "return": stats.return_, "return_z": stats.return_z,
+                    }
+                    for day, stats in index.aligned.items()
+                },
+            }
+            if index.available:
+                idx_table = index.daily.reset_index()
+                idx_table["date"] = idx_table["date"].astype(str)
+                entry["daily"] = json.loads(idx_table.to_json(orient="records"))
+            global_markets[name] = entry
         return {
             "company": self.config.company,
             "ticker": self.config.ticker,
@@ -107,6 +128,7 @@ class Analysis:
             "flagging_diagnostics": self.diagnostics,
             "macro": self.macro,
             "nifty_indices": nifty,
+            "global_markets": global_markets,
             "financials": self.financials,
             "unattributed_items": [
                 {"url": i.url, "source": i.source, "headline": i.headline,
@@ -219,6 +241,7 @@ def analyse(
     skip_nifty_indices: bool = False,
     financials_fetcher=None,
     skip_financials: bool = False,
+    skip_global_markets: bool = False,
 ) -> Analysis:
     frame, model, price_meta = returns.build(
         config.ticker, config.benchmark, config.start, config.end,
@@ -318,6 +341,12 @@ def analyse(
                          permutations=permutations,
                      ))
 
+    global_indices = ({} if skip_global_markets else
+                      global_markets_mod.load_global_indices(
+                          table.index.tolist(), config.start, config.end,
+                          lead_in_days=lead_in_days, providers=providers,
+                      ))
+
     financials = ({} if skip_financials else
                  financials_mod.financials_summary(
                      config.ticker, fetcher=financials_fetcher))
@@ -342,6 +371,7 @@ def analyse(
         macro_events=macro_events,
         macro=macro_summary,
         nifty_indices=nifty_indices,
+        global_indices=global_indices,
         financials=financials,
     )
 
@@ -429,6 +459,21 @@ def _print(analysis: Analysis) -> None:
             agree_str = (f", moved with {config.ticker} on {agreement['agree']}/"
                         f"{agreement['n']} candidate day(s)" if agreement["n"] else "")
             print(f"   {name:<12} {index.window_return * 100:+.2f}% over the window"
+                  f"{agree_str}")
+
+    if analysis.global_indices:
+        print("Global markets (descriptive backdrop, timezone-aligned, "
+              "not part of flagging):")
+        candidate_days = [i.day for i in analysis.incidents]
+        for name, index in analysis.global_indices.items():
+            if not index.available:
+                print(f"   {name:<18} unavailable — {index.note}")
+                continue
+            agreement = global_markets_mod.same_direction_rate(
+                index, analysis.daily, candidate_days)
+            agree_str = (f", moved with {config.ticker} on {agreement['agree']}/"
+                        f"{agreement['n']} candidate day(s)" if agreement["n"] else "")
+            print(f"   {name:<18} {index.window_return * 100:+.2f}% over the window"
                   f"{agree_str}")
 
     fin = analysis.financials
@@ -617,6 +662,12 @@ def main() -> None:
                              "lead-in price fetches and market-model fits "
                              "otherwise - useful if Yahoo is rate-limiting "
                              "this connection.")
+    parser.add_argument("--skip-global-markets", action="store_true",
+                        help="Don't fetch the S&P 500/Nasdaq/Dow/FTSE 100/"
+                             "Hang Seng/Nikkei 225 backdrop (see README "
+                             "Phase 12). Six more lead-in price fetches "
+                             "otherwise - useful if Yahoo is rate-limiting "
+                             "this connection.")
     parser.add_argument("--skip-financials", action="store_true",
                         help="Don't fetch revenue/expense/NOPAT/order-book "
                              "fundamentals from screener.in (see README "
@@ -715,6 +766,7 @@ def main() -> None:
             macro_provider=macro_provider, macro_fetcher=macro_fetcher,
             skip_nifty_indices=args.skip_nifty_indices,
             skip_financials=args.skip_financials,
+            skip_global_markets=args.skip_global_markets,
         )
     except PriceError as exc:
         print(f"\nPrice data unavailable: {exc}")

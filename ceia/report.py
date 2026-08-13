@@ -281,6 +281,60 @@ specific day, not just its raw return's sign.</p>
 """
 
 
+def _global_markets_section(global_indices: dict, incidents: list, daily: pd.DataFrame,
+                            ticker: str) -> str:
+    """S&P 500/Nasdaq/Dow/FTSE 100/Hang Seng/Nikkei 225 as a "ripple effect"
+    reference backdrop - same descriptive shape as the Nifty section above,
+    but each index's own trading day is timezone-aligned onto this
+    company's NSE trading day first (see ceia/global_markets.py's module
+    docstring for why a naive same-calendar-date comparison would be wrong
+    for a market that does not share NSE's hours). Descriptive only, like
+    every other backdrop section - never part of flagging.
+    """
+    if not global_indices:
+        return ""
+    from .global_markets import same_direction_rate
+    candidate_days = [i.day for i in incidents]
+    rows = []
+    for name, index in global_indices.items():
+        if not index.available:
+            rows.append(
+                f"<tr><td>{escape(name)}</td><td class=\"txt\">{escape(index.ticker)}</td>"
+                f'<td colspan="3" class="txt note">{escape(index.note or "unavailable")}</td></tr>'
+            )
+            continue
+        agreement = same_direction_rate(index, daily, candidate_days)
+        agree_cell = (f"{agreement['agree']}/{agreement['n']}"
+                     if agreement["n"] else "—")
+        alignment = ("same NSE day" if index.same_day_available
+                    else "prior trading day")
+        rows.append(
+            f"<tr><td>{escape(name)}</td><td class=\"txt\">{escape(index.ticker)}</td>"
+            f'<td class="{_cls(index.window_return)}">{_pct(index.window_return)}</td>'
+            f"<td>{index_sparkline_svg(index.daily)}</td>"
+            f'<td class="txt">{escape(alignment)}</td>'
+            f"<td>{agree_cell}</td></tr>"
+        )
+    return f"""
+<h2>Global markets</h2>
+<p>How major overseas indices moved around {escape(ticker)}'s own trading
+days — context, not a claim that a move overseas drove anything here.
+Because none of these markets share NSE's 9:15am–3:30pm IST hours, each
+index is paired with whichever of *its own* sessions was actually complete
+and known by the time that NSE day mattered: Hang Seng and Nikkei 225 close
+before NSE does, so their own same-dated session applies; the S&amp;P 500,
+Nasdaq, Dow, and FTSE 100 close overnight or after NSE's own close, so the
+*prior* trading day's session is the one actually known (see the
+Alignment column). <em>Moved with</em> is the same descriptive coincidence
+check the Nifty table above uses — of the flagged candidate days, how often
+this index's aligned session moved the same direction.</p>
+<div class="scroll"><table><thead><tr><th class="txt">Index</th>
+<th class="txt">Ticker</th><th>Window return</th><th>Trend</th>
+<th class="txt">Alignment</th><th>Moved with {escape(ticker)}</th></tr></thead><tbody>
+{"".join(rows)}</tbody></table></div>
+"""
+
+
 def _financials_row_stat(key: str, row: dict | None) -> str:
     if not row:
         return _stat(key, "unavailable")
@@ -499,11 +553,49 @@ def _index_breakdown_table(day, window: tuple[int, int], nifty_indices: dict) ->
     )
 
 
+def _global_market_breakdown_table(day, global_indices: dict) -> str:
+    """For one incident day, how each overseas index's *aligned* session
+    moved (see ``ceia/global_markets.py`` for why that's not simply "the
+    same calendar date"). A self-relative z-score (against that index's own
+    historical daily-return distribution), not a market-model abnormal
+    return against ^NSEI - the two markets don't share trading hours, so a
+    cross-market regression would assume a relationship that isn't there.
+    Empty when no configured index has aligned data for this day.
+    """
+    rows = []
+    for name, index in global_indices.items():
+        aligned = index.aligned.get(day)
+        if aligned is None:
+            continue
+        alignment = ("same NSE day" if index.same_day_available
+                    else "prior trading day")
+        rows.append(
+            f"<tr><td class=\"txt\">{escape(name)}</td>"
+            f"<td class=\"txt\">{aligned.aligned_date:%d %b %Y}</td>"
+            f'<td class="txt">{escape(alignment)}</td>'
+            f'<td class="{_cls(aligned.return_)}">{_pct(aligned.return_)}</td>'
+            f"<td>{aligned.return_z:+.1f}</td></tr>"
+        )
+    if not rows:
+        return ""
+    return (
+        '<h4 style="margin:16px 0 4px;font-size:.92rem">How global markets moved '
+        "around this day — each index's own aligned-session return and its own "
+        "z-score, not evidence either moved the other</h4>"
+        '<div class="scroll"><table><thead><tr><th class="txt">Index</th>'
+        '<th class="txt">Aligned session</th><th class="txt">Alignment</th>'
+        "<th>Return</th><th>z</th></tr></thead><tbody>"
+        + "".join(rows) + "</tbody></table></div>"
+    )
+
+
 def _incident_sections(incidents: list[Incident], company: str, benchmark: str,
-                       window: tuple[int, int], nifty_indices: dict | None = None) -> str:
+                       window: tuple[int, int], nifty_indices: dict | None = None,
+                       global_indices: dict | None = None) -> str:
     if not incidents:
         return ""
     nifty_indices = nifty_indices or {}
+    global_indices = global_indices or {}
     blocks = []
     for rank, inc in enumerate(incidents, 1):
         paragraphs = "".join(
@@ -525,7 +617,8 @@ def _incident_sections(incidents: list[Incident], company: str, benchmark: str,
                 "corroborating signal, not part of the flagging test.</p>"
             )
         p_value = (inc.car or {}).get("p_value")
-        index_block = _index_breakdown_table(inc.day, window, nifty_indices)
+        index_block = (_index_breakdown_table(inc.day, window, nifty_indices)
+                      + _global_market_breakdown_table(inc.day, global_indices))
         blocks.append(
             f'<div class="incident"><h3><span class="rank">#{rank}</span>'
             f"{inc.day:%d %B %Y}</h3>"
@@ -659,6 +752,7 @@ Hover any bar or marker for its exact date and value.</p>
 {timeline_svg(daily, incident_days, config.company, config.benchmark, incidents=incidents, macro_events=macro_events)}
 {_macro_section(getattr(analysis, "macro", {}) or {})}
 {_nifty_section(getattr(analysis, "nifty_indices", {}) or {}, incidents, daily, config.ticker)}
+{_global_markets_section(getattr(analysis, "global_indices", {}) or {}, incidents, daily, config.ticker)}
 {_financials_section(getattr(analysis, "financials", {}) or {})}
 
 <h2>Candidate incident days</h2>
@@ -683,7 +777,7 @@ that index moved on the same day, using the same <code>t</code>/<em>p**</em>/
 benchmark — a coincidence check for whether the move reached beyond this one
 stock, not evidence either one drove the other.</p>
 {_incident_table(incidents, config.event_window, robustness)}
-{_incident_sections(incidents, safe_company, safe_benchmark, config.event_window, getattr(analysis, "nifty_indices", {}) or {})}
+{_incident_sections(incidents, safe_company, safe_benchmark, config.event_window, getattr(analysis, "nifty_indices", {}) or {}, getattr(analysis, "global_indices", {}) or {})}
 
 <h2>Daily detail</h2>
 <p>Every trading day in the window. Highlighted rows are flagged days.

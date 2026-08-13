@@ -93,6 +93,13 @@ def prices(tmp_path: Path) -> Path:
     pd.DataFrame({"date": pd.to_datetime(days),
                   "close": 100 * np.cumprod(1 + bank)}
                  ).to_csv(tmp_path / "_idx_NSEBANK.csv", index=False)
+    # Only one of the six global indices gets a CSV fixture too - same
+    # "some degrade, one is real" shape as the Nifty sector indices above
+    # (see TestGlobalMarkets).
+    spx = 0.0002 + 0.8 * market + rng.normal(0, 0.006, len(days))
+    pd.DataFrame({"date": pd.to_datetime(days),
+                  "close": 100 * np.cumprod(1 + spx)}
+                 ).to_csv(tmp_path / "_idx_GSPC.csv", index=False)
     return tmp_path
 
 
@@ -125,7 +132,8 @@ def build_items() -> list[NewsItem]:
 
 
 def run_pipeline(price_dir: Path, start=date(2023, 1, 20), end=date(2023, 2, 3),
-                 benchmark2: str | None = None, skip_nifty: bool = False):
+                 benchmark2: str | None = None, skip_nifty: bool = False,
+                 skip_global_markets: bool = False):
     config = RunConfig(company="Testco", ticker="TEST.NS", benchmark="^NSEI",
                        benchmark2=benchmark2,
                        start=start, end=end, aliases=["Testco Ltd", "Testco"],
@@ -151,6 +159,7 @@ def run_pipeline(price_dir: Path, start=date(2023, 1, 20), end=date(2023, 2, 3),
                        macro_provider=CsvProvider(price_dir),
                        macro_fetcher=SkippedFetcher(),
                        skip_nifty_indices=skip_nifty,
+                       skip_global_markets=skip_global_markets,
                        financials_fetcher=SkippedFinancialsFetcher())
     return analysis, kept, dropped
 
@@ -369,6 +378,68 @@ class TestNiftyIndices:
         import json
         analysis, _, _ = run_pipeline(prices)
         assert json.loads(json.dumps(analysis.to_dict(), default=str))
+
+
+class TestGlobalMarkets:
+    """The overseas "ripple effect" backdrop - timezone-aligned onto the
+    company's own NSE trading days, see ceia/global_markets.py's module
+    docstring for why that alignment matters."""
+
+    def test_all_six_indices_are_attempted(self, prices):
+        analysis, _, _ = run_pipeline(prices)
+        assert set(analysis.global_indices) == {
+            "S&P 500", "Nasdaq Composite", "Dow Jones", "FTSE 100",
+            "Hang Seng", "Nikkei 225",
+        }
+
+    def test_available_index_populates_daily_and_window_return(self, prices):
+        analysis, _, _ = run_pipeline(prices)
+        spx = analysis.global_indices["S&P 500"]
+        assert spx.available
+        assert not spx.daily.empty
+        assert spx.window_return == spx.window_return  # not NaN
+
+    def test_missing_index_csv_degrades_without_sinking_the_run(self, prices):
+        """Five of the six global indices have no CSV fixture - each must
+        degrade to its own note, never raise or blank out the primary
+        analysis."""
+        analysis, _, _ = run_pipeline(prices)
+        nasdaq = analysis.global_indices["Nasdaq Composite"]
+        assert not nasdaq.available
+        assert "unavailable" in nasdaq.note
+        assert not analysis.daily.empty
+        assert date(2023, 1, 25) in {i.day for i in analysis.incidents}
+
+    def test_skip_global_markets_leaves_it_empty(self, prices):
+        analysis, _, _ = run_pipeline(prices, skip_global_markets=True)
+        assert analysis.global_indices == {}
+
+    def test_us_index_aligns_to_the_prior_nse_trading_day(self, prices):
+        """S&P 500 is not same_day_available - the US session overnight
+        before a flagged NSE day is the one that's actually known, not that
+        day's own (not-yet-complete) US session."""
+        analysis, _, _ = run_pipeline(prices)
+        spx = analysis.global_indices["S&P 500"]
+        flagged_day = date(2023, 1, 25)
+        assert flagged_day in {i.day for i in analysis.incidents}
+        aligned = spx.aligned[flagged_day]
+        assert aligned.aligned_date < flagged_day
+
+    def test_html_report_renders_the_global_markets_section(self, prices):
+        analysis, _, _ = run_pipeline(prices)
+        html = build_html(analysis)
+        assert "S&amp;P 500" in html
+        assert "Nasdaq Composite" in html  # shown even though unavailable
+
+    def test_html_report_renders_the_per_incident_breakdown(self, prices):
+        analysis, _, _ = run_pipeline(prices)
+        html = build_html(analysis)
+        assert "How global markets moved around this day" in html
+
+    def test_json_payload_is_serialisable_with_global_indices(self, prices):
+        import json
+        analysis, _, _ = run_pipeline(prices)
+        json.dumps(analysis.to_dict(), default=str)
 
 
 class TestDegradation:

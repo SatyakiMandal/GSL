@@ -1610,6 +1610,53 @@ Summary section only when there's enough data to compute them (the same
 "only shown when meaningful" pattern the secondary-benchmark beta card
 already uses) — never fed into candidate-day flagging.
 
+## Phase 12 — global markets, timezone-aligned
+
+A follow-up question after walking through a generated report: after-close
+news attribution (`ceia/align.py`, since early in the project — items
+published at or after NSE's 3:30pm IST close are attributed to the *next*
+trading day, using the real exchange calendar) already handled the first
+half of the question asked. The second half — do global markets (NASDAQ,
+LSE, Hong Kong, etc.) ripple into this company's own price action, the way
+Nifty sector indices already do — needed new work, because it isn't the
+same problem Nifty solved.
+
+Nifty sector indices trade on the same exchange, same hours, as the
+company — same-calendar-day comparison is exactly right there. A global
+market shares none of NSE's 9:15am–3:30pm IST hours, so pairing "NSE day X"
+with "global index's own day X" would silently compare against a session
+that either hasn't started yet or is still running — the same
+misattribution `ceia/align.py` already guards against for after-close news,
+now applied to whole markets instead of individual articles.
+
+`ceia/global_markets.py` tags each configured index `same_day_available`:
+whether *its own* session, for a given date, closes (in IST clock time) at
+or before NSE's own 3:30pm close that date.
+
+- **Hang Seng** (HKT) and **Nikkei 225** (JST) both run mostly within NSE's
+  own hours and close before 3:30pm IST — their own same-dated session is
+  genuinely complete and known by NSE's close.
+- **S&P 500 / Nasdaq / Dow** (US Eastern) run entirely overnight IST-time,
+  closing ~1:30-2:30am IST the *next* calendar day — the *prior* US trading
+  day is the session actually known by NSE's next open.
+- **FTSE 100** (London) closes ~9-10pm IST, well after NSE has already
+  closed for the day — the prior LSE trading day is the one actually known.
+
+A `same_day_available` index is paired with its own most recent trading day
+*at or before* the NSE day; every other index is paired with its most
+recent trading day *strictly before* it. Either way this degrades
+gracefully across holiday-calendar mismatches — a missing session on the
+exact aligned date just falls back further, the same way `ceia.align`'s
+own trading-day lookups already do for news.
+
+Deliberately descriptive only, matching the Nifty section's own scope: each
+index's window return and rebased trend (a "Global markets" section, same
+shape as "Nifty sector indices"), plus — per flagged incident — that
+index's aligned-session return and a z-score against *its own* historical
+daily-return distribution, not a cross-market market-model regression
+against ^NSEI (which would assume a same-hours relationship these markets
+don't actually have). `--skip-global-markets` skips the fetch entirely.
+
 ## Reusing the collected corpus
 
 `data/adani_wide_2023.json` holds the 137-item Adani corpus from the validation
