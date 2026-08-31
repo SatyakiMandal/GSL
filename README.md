@@ -1697,9 +1697,244 @@ Two things the corpus caught that smaller runs could not:
   was uniform. Rebalanced to a saturating curve with named weights; the
   distribution now runs 0.36–0.97 with nothing at the ceiling.
 - **`\bAdani\b` does not match "Adanis".** The Indian press writes the family
-  and group forms constantly, and one story with forty body mentions scored 0.37
-  because of it. Alias patterns now accept an optional `s`, `'s` or `’s` — that
-  story moved to 0.97. A negative test ensures "Adaniyar" still does not match.
+---
+
+## Phase 13 — Fundamental Analysis, Merton Distance to Default & Value at Risk (VaR)
+
+Extends single-firm case studies with structural credit risk, multi-method market loss percentiles, and full financial ratio breakdowns:
+
+* **Fundamental Ratios & Balance Sheet**: Extracted from screener.in (Stock P/E, Book Value, ROCE, ROE, Dividend Yield, Total Debt/Borrowings, Debt-to-Equity, Net Profit).
+* **Merton (1974) Structural Distance to Default**: Numerically solves the non-linear Black-Scholes simultaneous system for asset value ($V_A$) and asset volatility ($\sigma_A$) using market cap, total debt, equity volatility ($\sigma_E$), and 10Y G-Sec yield. Outputs Distance to Default ($DD$ in standard deviations) and implied Default Probability ($\text{DP} = \mathcal{N}(-DD)$).
+* **Value at Risk (VaR) & Expected Shortfall (CVaR)**: Computes 1-day and 10-day loss percentiles at 95% and 99% confidence using **Historical Simulation**, **Parametric (Normal)**, and **Monte Carlo Simulation** (10,000 Geometric Brownian Motion paths with fixed deterministic seed).
+
+---
+
+## Phase 14 — Multi-Factor Asset Pricing & Batch Peer Analysis (CEIA 2.0)
+
+Transforms CEIA from a single-company tool into a multi-factor, cross-sectional institutional research platform:
+
+* **Multi-Factor Regression Engine (`ceia/returns.py`)**:
+  * **Fama-French 3-Factor**: $R_i = \alpha + \beta_{MKT} R_m + \beta_{SMB} R_{SMB} + \beta_{HML} R_{HML} + \epsilon$
+  * **Carhart 4-Factor**: Adds Momentum factor ($\beta_{MOM} R_{MOM}$)
+  * **Indian Factor Proxies**: Market ($^NSEI$), Size/SMB (Nifty Midcap 100 vs Nifty 50), Value/HML (Nifty 500 Value 50 vs Nifty 500), Momentum/WML (Nifty 200 Momentum 30).
+* **Multi-Company Batch Peer Group Analysis (`ceia/batch.py`)**:
+  * Run entire peer groups in a single command: `python -m ceia.batch --peer-group tata --start 2026-01-01 --end 2026-06-30 --html out/tata_peer_report.html`
+  * **Pairwise AR Spillover Matrix**: Cross-company correlation of idiosyncratic abnormal returns.
+  * **Comparative Risk & Valuation Leaderboard**: Side-by-side comparison of Beta, $R^2$, P/E, ROCE, Debt/Equity, Distance to Default, and 1D 95% VaR.
+  * **Concurrent Sector Shock Detector**: Automatically flags dates where 2 or more peer companies suffered simultaneous candidate shocks.
+
+---
+
+## Phase 15 — Targeted ABSA, Corporate Actions, Auto-Peers & PV-ADI (CEIA 2.1)
+
+Harden semantic accuracy, data integrity, and institutional disruption scoring:
+
+* **Aspect-Based Entity Sentiment (Targeted ABSA)**: Extracts only sentences/paragraphs directly referencing the company or its aliases before running FinBERT, preventing sentiment contamination from competitor news in syndicated sector roundups.
+* **Corporate Actions & Split Discontinuity Detection**: Identifies unadjusted stock split or bonus issue price drops (e.g. -50%, -66%, -80%, -90%) to prevent corporate actions from registering as false-alarm news incidents.
+* **Auto-Discovery of Live Peers from Screener.in**: `python -m ceia.batch --auto-peers TATASTEEL.NS` automatically scrapes and analyzes the live competitor table from screener.in.
+* **Price-Volume Abnormal Disruption Index (PV-ADI)**: Computes $\text{ADI}_t = \sqrt{z_{AR,t}^2 + z_{VOL,t}^2}$ to detect institutional repositioning and multi-day contiguous event clusters.
+
+---
+
+## Phase 16 — Amihud Illiquidity, GARCH Volatility & Post-Event Drift (CEIA 3.0)
+
+Extends the econometric core with liquidity friction modeling, dynamic volatility clustering, and post-event trajectory decomposition:
+
+* **Amihud (2002) Illiquidity Ratio (`ceia/returns.py`)**: Computes daily illiquidity $\text{ILLIQ}_t = \frac{|R_t|}{\text{Price}_t \times \text{Volume}_t} \times 10^7$, distinguishing genuine fundamental institutional repricing from liquidity vacuum dislocations.
+* **GARCH(1,1) Time-Varying Conditional Volatility (`ceia/returns.py`)**: Models conditional residual variance ($\sigma_t^2 = \omega + \alpha \epsilon_{t-1}^2 + \beta \sigma_{t-1}^2$) to standardize abnormal returns, eliminating false-alarm shocks during clustered market-wide turbulence.
+* **Post-Event Trajectory Decomposition (`ceia/eventstudy.py`)**: Decomposes price reaction into Immediate Shock ($CAR[-1, +1]$) vs Subsequent Drift ($CAR[+2, +5]$), categorizing events into:
+  1. **Permanent Repricing**: Structural shift that holds or continues.
+  2. **Overreaction Reversal**: Sharp initial reaction followed by immediate mean-reversion.
+  3. **Post-Announcement Drift (PEAD)**: Delayed street digestion with continuing drift.
+* **Term-Structure Sovereign Yield Matching (`ceia/distance_to_default.py`)**: Dynamically aligns the risk-free rate ($r_f$) with the debt maturity horizon (1Y T-bill, 3Y, 5Y, or 10Y G-Sec benchmark).
+
+---
+
+## Phase 17 — Sector Valuation, Macro Transmission & Cross-Sectional CAAR (CEIA 3.1)
+
+Introduces cross-sectional sector intelligence, multi-asset macro transmission factor modeling, and narrative trajectory synthesis:
+
+* **Sector-Relative Valuation Multiples (`ceia/financials.py`, `ceia/batch.py`)**: Computes sector-relative valuation spreads ($\text{P/E Spread \%} = \frac{P/E - \text{Median } P/E}{\text{Median } P/E} \times 100$) and ROCE spread to classify whether a firm trades at a structural **Premium**, **Discount**, or **Par** relative to live industry peers.
+* **Macro Commodity & Currency Transmission Factor Builder (`ceia/returns.py`)**: Assembles multi-asset daily return matrices ($MKT, CRUDE, USDINR$) to estimate cross-asset factor exposures ($\beta_{\text{Crude}}, \beta_{\text{USDINR}}$) alongside equity benchmarks.
+* **Executive Trajectory Narrative Auto-Synthesis (`ceia/narrative.py`)**: Synthesizes the quantitative event distribution directly into the opening executive briefing (e.g. distinguishing permanent fundamental repricing vs mean-reverting overreaction shocks).
+* **Sector-Wide Cumulative Average Abnormal Return (CAAR) Trajectory (`ceia/batch.py`)**: Calculates the daily cross-sectional average abnormal return ($\text{AAR}_t = \frac{1}{N}\sum_{i=1}^N AR_{i,t}$) and cumulative trajectory ($\text{CAAR}_t$) across the entire peer group in multi-company comparative batch analyses.
+
+---
+
+## Phase 18 — Cornish-Fisher Fat-Tail VaR, Print-Deck Styling & Regulatory Priority (CEIA 3.2)
+
+Elevates tail-risk precision, publication output fidelity, and statutory filing intelligence:
+
+* **Cornish-Fisher Fat-Tail VaR Expansion (`ceia/var.py`)**: Integrates higher-order statistical moments (skewness $S$ and excess kurtosis $K$) via Cornish-Fisher expansion to compute fat-tail adjusted VaR across multi-horizon term cones ($1D, 5D, 10D, 21D$).
+* **Print-Perfect A4 Institutional PDF Deck Formatting (`ceia/report.py`, `ceia/batch.py`)**: Incorporates `@media print` CSS rules with `@page { size: A4 portrait; margin: 1.2cm; }`, table header repeating (`thead { display: table-header-group; }`), and card break protection (`page-break-inside: avoid;`) enabling direct one-click PDF deck generation.
+* **SEBI LODR Regulation 30 Statutory Priority Classifier (`ceia/sentiment.py`)**: Automatically categorizes exchange corporate announcements into statutory priority tiers:
+  1. **Tier 1 (High)**: Price-Sensitive Material Events (LODR Reg 30: M&A, key executive exits, loan defaults, forensic audits, rating actions).
+  2. **Tier 2 (Medium)**: Financial Results & Dividends (LODR Reg 33).
+  3. **Tier 3 (Routine)**: Secretarial & General Compliance (Reg 31 shareholding, certificates).
+
+---
+
+## Phase 19 — Rolling Beta Dynamics, Refutation Scope & Multi-Tab Excel Export (CEIA 3.3)
+
+Adds time-varying systematic risk tracking, semantic denial handling, and institutional spreadsheet interoperability:
+
+* **Rolling Beta Dynamics & Chow Structural Break Test (`ceia/returns.py`)**: Computes 60-day rolling market beta ($\beta_t$) and evaluates structural parameter stability via Chow F-test ($F = \frac{(SS_p - (SS_1 + SS_2))/k}{(SS_1 + SS_2)/(N - 2k)}$) to flag fundamental market sensitivity regime shifts.
+* **Contextual Sentiment Negation & Refutation Scope Parser (`ceia/sentiment.py`)**: Identifies negation prefixes (*denies*, *refutes*, *dismisses*, *unfounded*, *no default*) attached to adverse keywords (*fraud*, *default*, *irregularity*) to prevent false-negative sentiment contamination in headline and filing scoring.
+* **Institutional Multi-Tab Excel Workbook Exporter (`ceia/export_excel.py`)**: Supports `--xlsx out/report.xlsx` generating a multi-tab formatted workbook with sheets:
+  1. **Executive Summary**: Core valuation, risk parameters, and model metrics.
+  2. **Daily Detail**: Complete daily price, abnormal return, volume, and sentiment time series.
+  3. **Candidate Incidents**: Flagged event dates, CAR windows, and trajectory classifications.
+  4. **VaR Term Structure**: Multi-horizon ($1D, 5D, 10D, 21D$) Historical, Parametric, Cornish-Fisher, and Monte Carlo risk term cones.
+
+---
+
+## Phase 20 — Factor Exposure Attribution, Entity Salience & Institutional Executive Callouts (CEIA 3.4)
+
+Enriches factor risk attribution granularity, article relevance precision, and executive synthesis:
+
+* **Factor Return Exposure Attribution Breakdown (`ceia/returns.py`)**: Computes exact basis-point daily return contributions ($R_{\text{attrib}, k, t} = \beta_k \times F_{k, t}$) for all estimated risk factors ($MKT, SMB, HML, MOM, CRUDE, USDINR$), isolating total factor explained return from pure idiosyncratic shock alpha.
+* **Strict Entity Salience Filtering (`ceia/sentiment.py`)**: Quantifies target company prominence / mention density within multi-company sector roundups and market wrap articles, filtering out passing low-salience listicle mentions ($< 0.20$).
+* **Institutional Executive Callouts Box (`ceia/report.py`)**: Renders a publisher-grade executive callouts box synthesizing (1) Event Study Trajectories, (2) Fundamental Valuation & Margin Momentum, (3) Solvency Cushion & Tail Risk, and (4) Systematic Market Sensitivity.
+
+---
+
+## Phase 21 — Overlapping Event Window Decoupling & Governance Risk Index (CEIA 3.5)
+
+Enhances multi-event interaction mechanics and qualitative corporate governance quantification:
+
+* **Overlapping Event Window Decoupling (`ceia/eventstudy.py`)**: Resolves cumulative abnormal return (CAR) double-counting when candidate event windows overlap ($|t_2 - t_1| \le \text{window span}$). Partitions shared trading days at the temporal midpoint ($mid = \lfloor(t_1 + t_2)/2\rfloor$) to compute orthogonalized, decoupled CARs ($\text{CAR}_{\text{decoupled}}$).
+* **Institutional Governance Risk Index (GRI) (`ceia/financials.py`)**: Synthesizes a composite governance risk score ($0–100$, tiered from *Low Risk* to *High Risk*) across 4 core institutional pillars:
+  1. **Promoter Pledge Exposure**: Penalizes elevated promoter share encumbrance ($\ge 10\%$ and $\ge 30\%$).
+  2. **Auditor Stability & Integrity**: Detects audit qualifications, adverse opinions, and mid-term auditor resignations.
+  3. **Regulatory Inquiries & Search Actions**: Tracks statutory probes (SEBI show-cause notices, ED search/seizure raids, CBI/SFIO inquiries, NCLT CIRP petitions).
+  4. **Contingent Liability Exposure**: Flags excessive off-balance-sheet contingent claims relative to net worth ($\ge 50\%$).
+
+---
+
+## Phase 22 — CUSUM Window Calibration, Lead-Lag Transmission & Earnings PEAD Matrix (CEIA 3.6)
+
+Advances dynamic empirical event modeling, cross-asset transmission lead-lag dynamics, and multi-quarter earnings surprise tracking:
+
+* **Dynamic Empirical Event Window Calibration via CUSUM Anomaly Detection (`ceia/eventstudy.py`)**: Computes forward and backward CUSUM control charts on daily standardized abnormal returns to dynamically discover exact empirical shock boundaries $[t_{\text{start}}, t_{\text{end}}]$, detecting pre-event information leakage ($t_{\text{start}} < -1$) and persistent post-announcement drift ($t_{\text{end}} > +1$).
+* **Multi-Horizon Cross-Asset Lead-Lag Transmission Engine (`ceia/returns.py`)**: Computes cross-correlation functions $r(\tau) = \text{Corr}(R_{i, t}, F_{k, t - \tau})$ for $\tau \in [-5, +5]$ across equity returns and macro transmission factors (Brent Crude, USD/INR, Sovereign Yields), identifying optimal predictive transmission horizons.
+* **Historical Multi-Quarter Earnings Surprise & PEAD Matrix (`ceia/financials.py`)**: Computes an 8-quarter sequential growth surprise and operating margin evolution matrix (QoQ Sales, Operating Margin, PAT Growth), classifying operating momentum status (*Accelerating Growth*, *Steady Compounding*, *Margin Deceleration*, *Cyclical Downturn*).
+
+---
+
+## Phase 23 — Media Divergence, Multi-Scale Variance & GARCH-Adaptive Clustering (CEIA 3.7)
+
+Expands information asymmetry analytics, frequency-domain return decomposition, and volatility-adaptive clustering:
+
+* **Cross-Source Sentiment Divergence & Media Asymmetry Index (`ceia/sentiment.py`)**: Quantifies daily narrative fragmentation across financial news outlets ($\sigma^2_{\text{sources}, t} = \text{Var}(s_{k, t})$) to detect when conflicting media reporting flags heightened investor uncertainty.
+* **Multi-Scale Frequency Variance Decomposition (`ceia/returns.py`)**: Decomposes total return variance across dyadic frequency scales: High-Frequency Transient Noise ($1–2D$, Scale D1), Intermediate Momentum Drift ($3–5D$, Scale D2), and Low-Frequency Structural Re-Rating ($6–20D$, Scale D3), categorizing shock persistence regimes.
+* **Volatility-Adaptive Event Clustering Horizon (`ceia/eventstudy.py`)**: Dynamically sizes the multi-day event clustering gap using the GARCH(1,1) shock persistence half-life $\tau_{1/2} = \frac{\ln(0.5)}{\ln(\alpha + \beta)}$, widening event aggregation in high-volatility regimes and narrowing it during calm periods.
+
+---
+
+## Phase 24 — Event Drawdown & Recovery, Volatility Cones & Category Profiles (CEIA 3.8)
+
+Deepens drawdown path analytics, term-structure volatility regime classification, and category response baselines:
+
+* **Event High-Water Mark Drawdown & Recovery Horizon (`ceia/returns.py`)**: Quantifies the peak-to-trough price impact ($\text{MDD}_{\text{event}}$) and the empirical recovery duration $T_{\text{recovery}}$ (number of trading days to regain pre-event price level, or remaining percentage deficit) for each flagged shock day.
+* **Multi-Horizon Volatility Term Cone & Percentile Classifier (`ceia/var.py`)**: Constructs rolling realized annual volatility term cones ($30D, 60D, 90D, 180D$) against historical percentile distributions ($10^{\text{th}}, 25^{\text{th}}, 50^{\text{th}}, 75^{\text{th}}, 90^{\text{th}}$), classifying overall market volatility regimes (*Extreme High Volatility*, *Elevated*, *Normal*, *Subdued*).
+* **Historical Event-Type Response Distribution Profiler (`ceia/eventstudy.py`)**: Aggregates abnormal returns, hit-rates, and CAR magnitude by event category (*earnings*, *regulatory*, *leadership*, *mna*, *capital*, *product*, *litigation*) to profile company-specific event elasticity.
+
+---
+
+## Phase 25 — Macro Stress Simulator, ESG Controversy Classifier & Arrival Velocity (CEIA 3.9)
+
+Adds multi-factor crisis stress simulation, ESG & carbon transition intelligence, and information flow velocity analytics:
+
+* **Macro Stress Testing & Crisis Scenario Simulator (`ceia/returns.py`)**: Simulates expected equity drawdown and factor attribution across 5 canonical macro stress scenarios (2020 Covid Liquidity Shock, 2022 Energy/Crude Spike, 2013 Taper Tantrum Currency Crisis, 2008 GFC, and Stagflation Shock) by applying historical shock vectors to fitted multi-factor betas.
+* **ESG & Carbon Transition Controversy Classifier (`ceia/sentiment.py`)**: Classifies corporate news into Environmental, Social, and Governance pillars, tagging green capex transition signals (net-zero, hydrogen, solar) vs severe controversy violations (labor strikes, safety fatalities, SEBI/forensic audit penalties).
+* **Information Arrival Velocity & News Cascading Accelerator (`ceia/eventstudy.py`)**: Computes the daily news coverage derivative $\text{IAV}_t = \frac{\text{Coverage}_t - \text{SMA}_{t-1, 3}}{\max(1, \text{SMA}_{t-1, 3})}$ to detect breaking media cascades ($\text{IAV}_t \ge 2.0$, representing a 200%+ surge over recent baseline).
+
+---
+
+## Phase 26 — Volatility Regime Detection, Media Authority & Risk Parity (CEIA 4.0 Milestone)
+
+Delivers discrete market regime filtering, institutional source hierarchy weighting, and risk-parity position sizing:
+
+* **Two-State Markov Volatility Regime Detector (`ceia/returns.py`)**: Implements a 2-state Gaussian mixture regime filter partitioning daily returns into `Low Volatility Stable Drift` (State 0) vs `High Volatility Shock` (State 1), estimating daily posterior state probabilities $P(S_t = 1)$ and a continuous turbulence ratio.
+* **Institutional Media Domain Authority & Credibility Weighting (`ceia/sentiment.py`)**: Implements a 4-tier domain credibility matrix ($w_{\text{domain}} \in [0.7, 1.5]$) scaling item confidence by publisher authority: Tier 1 (1.5x) Statutory/Exchanges (NSE/BSE/SEBI), Tier 2 (1.2x) Premier Financial Press (Moneycontrol, Mint, ET, Reuters), Tier 3 (1.0x) Mainstream Press, and Tier 4 (0.7x) Aggregators.
+* **Risk-Parity Asset Allocation & Position Sizing Engine (`ceia/var.py`)**: Calculates inverse-volatility risk parity portfolio weights $w_i = \frac{1/\sigma_i}{1/\sigma_i + 1/\sigma_{\text{benchmark}}}$ and risk-budgeted maximum capital allocation limits.
+
+---
+
+## Phase 27 — Peer Contagion, Open-Close Gap Decomposition & Sentiment Half-Life (CEIA 4.1)
+
+Expands cross-sectional network propagation, intraday auction dynamics, and media memory decay:
+
+* **Peer Contagion & Cross-Elasticity Shock Spillover Matrix (`ceia/returns.py`)**: Calculates empirical cross-elasticity $\gamma_{ij} = \frac{\text{Cov}(R_i, R_{\text{peer}, j})}{\text{Var}(R_i)}$ across industry peer daily returns, classifying high-sympathy sector movers ($\gamma \ge 0.60$) vs idiosyncratic insulations.
+* **Overnight Gap Open vs Intraday Drift Decomposition (`ceia/eventstudy.py`)**: Partitions daily abnormal returns into pre-market opening auction discovery ($\text{AR}_{\text{overnight}}$) vs continuous intraday trading drift ($\text{AR}_{\text{intraday}}$), diagnosing the dominant price discovery mechanism for corporate events.
+* **Media Narrative Decay & Sentiment Half-Life Engine (`ceia/sentiment.py`)**: Fits an exponential decay model $|S(t)| = S_0 e^{-\lambda t}$ across post-event news articles to compute the empirical narrative half-life $t_{1/2} = \frac{\ln(2)}{\lambda}$, classifying market news absorption regimes (*Rapid Absorption*, *Moderate Linger*, *Persistent Narrative*).
+
+---
+
+## Phase 28 — Asymmetric Downside Beta, Uncertainty Density & Dedicated Excel Directory (CEIA 4.2 Frontier)
+
+Delivers asymmetric market risk decomposition, managerial tone hedging analytics, and structured output folder separation:
+
+* **Asymmetric Downside Beta ($\beta^-$) & Downside Capture Engine (`ceia/returns.py`)**: Decomposes equity sensitivity into Upside Beta ($\beta^+$) vs Downside Beta ($\beta^-$) and computes the Downside Capture Ratio to detect asymmetric downside fragility ($\beta^- > \beta^+$).
+* **Management Tone Uncertainty & Modal Hedging Parser (`ceia/sentiment.py`)**: Computes Loughran-McDonald Uncertainty Density Index on company disclosures to quantify modal hedging ambiguity (*might*, *could*, *contingent*, *tentative*, *pending*).
+* **Multi-Horizon CAR Term Structure & Absorption Speed (`ceia/eventstudy.py`)**: Computes $\text{CAR}_{[0, +H]}$ cones ($1D, 3D, 5D, 10D$) and calculates the Day-1 Information Absorption Ratio to diagnose market pricing efficiency.
+* **Dedicated Output Folder Separation & Native OpenXML Excel Engine (`ceia/export_excel.py`, `ceia/analyze.py`)**: Automatically routes `.html` and `.json` files to the `out/` folder and `.xlsx` workbooks to the `Excel/` folder. Native OpenXML `.xlsx` binary packaging (via `openpyxl` with pure-Python ZIP fallback) guarantees seamless, error-free opening in Microsoft Excel on Windows.
+
+---
+
+## Phase 29 — Amihud Illiquidity Shocks, Media Cascade Cascades & Multi-Event CAR Attribution (CEIA 4.3)
+
+Expands market microstructure liquidity stress testing, media news propagation kinetics, and net event return attribution:
+
+* **Amihud Microstructure Illiquidity & Price Impact Shock Engine (`ceia/returns.py`)**: Computes daily rolling Amihud (2002) illiquidity ratio $\text{ILLIQ}_t = \frac{|R_t|}{\text{Turnover}_t / 10^6}$ and evaluates event shock day illiquidity multipliers and basis-point trade slippage costs to diagnose order-book evaporation.
+* **Media Cascade & Echo Chamber Propagation Tracker (`ceia/sentiment.py`)**: Traces chronological publication sequence of news items for candidate events, distinguishing originating lead sources from secondary echo syndication and calculating the Echo Amplification Multiplier ($E_{\text{amp}} = \frac{\text{Echo Count}}{\text{Lead Count}}$) and cascade breadth.
+* **Multi-Event Net CAR Attribution Waterfall Decomposer (`ceia/eventstudy.py`)**: Partitions the stock's full-period cumulative excess return into discrete event category contributions (`earnings`, `regulatory`, `contract_wins`, `leadership`, `litigation`, `mna`) and unexplained alpha drift.
+
+---
+
+## Phase 30 — Crash Risk Tail Skewness, Forward Guidance & 5-Tab Excel Attribution (CEIA 4.4)
+
+Introduces tail crash risk asymmetry, corporate guidance commitment parsing, and 5-tab workbook return attribution:
+
+* **Idiosyncratic Crash Risk Asymmetry Engine (`ceia/returns.py`)**: Computes Negative Coefficient of Skewness ($\text{NCSKEW}$) and Down-to-Up Volatility Ratio ($\text{DUVOL}$) on residual returns to quantify event-driven tail crash vulnerability.
+* **Forward Guidance & Management Target Parser (`ceia/sentiment.py`)**: Identifies forward-looking guidance statements (*targets*, *capex guidance*, *margin outlook*, *growth projections*) and classifies management commitment into quantified vs qualitative outlook tiers.
+* **Lo-MacKinlay Multi-Period Variance Ratio Engine (`ceia/eventstudy.py`)**: Evaluates multi-period variance ratios ($VR(k) = \frac{\text{Var}(R^{(k)})}{k \cdot \text{Var}(R^{(1)})}$) to differentiate mean-reverting transitory shocks from permanent structural repricing.
+* **5-Tab Multi-Tab Excel Workbook Integration (`ceia/export_excel.py`)**: Surfaces advanced risk metrics in `Executive Summary` and adds a dedicated `Event CAR Attribution` tab decomposing net excess return into discrete event category shares.
+
+---
+
+## Phase 31 — Volatility Shift F-Test, SEBI Reg 30 Materiality & Directional Spillover (CEIA 4.5)
+
+Delivers structural volatility shift detection, statutory legal urgency classification, and directional sector variance spillover:
+
+* **Structural Volatility Break & Regime Shift Detector (`ceia/returns.py`)**: Computes two-sided F-test ($F = \frac{\sigma_{\text{post}}^2}{\sigma_{\text{pre}}^2}$) across pre- vs post-event return windows to detect statistically significant permanent volatility expansions ($p < 0.05$) vs transitory noise.
+* **SEBI LODR Regulation 30 Materiality & Urgency Classifier (`ceia/sentiment.py`)**: Categorizes disclosures under SEBI LODR Schedule III into Tier 1 (Immediate Price Sensitive / 30m-24h statutory deadline), Tier 2 (Material Business Event), and Tier 3 (Standard Statutory Filing).
+* **Directional Volatility Spillover & Interconnectedness Index (`ceia/eventstudy.py`)**: Measures directional variance transmission between the company and sector index ($\text{Spillover} = \frac{\text{Cov}(\Delta \sigma_s, \Delta \sigma_m)}{\text{Var}(\Delta \sigma_s)}$) to classify the stock as a *Net Volatility Transmitter* vs *Sector Shock Absorber*.
+
+---
+
+## Phase 32 — Systematic Coskewness, Governance Red-Flags & Asymptotic CAR Half-Life (CEIA 4.6)
+
+Delivers higher-moment asset pricing exposures, forensic governance scrutiny, and continuous price discovery modeling:
+
+* **Systematic Coskewness & Cokurtosis Engine (`ceia/returns.py`)**: Implements Harvey & Siddique (2000) higher-moment pricing moments measuring tail crash covariance ($S_{\text{coskew}} = \frac{E[\epsilon_i \epsilon_m^2]}{\sqrt{\text{Var}(\epsilon_i)} \text{Var}(\epsilon_m)}$) and extreme market co-kurtosis ($K_{\text{cokurt}}$).
+* **Corporate Governance Red-Flag Forensic Parser (`ceia/sentiment.py`)**: Parses corporate announcements for statutory governance red flags across audit qualifications, related-party transactions (RPTs), promoter pledge invocations, and executive turnover alerts.
+* **Asymptotic CAR Absorption Half-Life Model (`ceia/eventstudy.py`)**: Fits continuous exponential response curves $\text{CAR}(t) = \text{CAR}_{\infty} (1 - e^{-\kappa t})$ across post-event trading days to compute the exact pricing discovery half-life $t_{1/2}^{\text{price}} = \frac{\ln(2)}{\kappa}$.
+
+---
+
+## Phase 33 — Comprehensive Institutional Suite & 8-Tab Workbook (CEIA 5.0 Milestone)
+
+Delivers a multi-disciplinary institutional suite across quantitative tail risk, market microstructure, linguistic complexity, econometric tests, and balance sheet forensics:
+
+* **Copula Tail Dependence Matrix (`ceia/returns.py`)**: Computes empirical lower-tail crash dependence ($\lambda_L$) and upper-tail boom dependence ($\lambda_U$) to measure asymmetric extreme comovements during market downturns.
+* **Microstructure Roll Spread & Kyle's Lambda / VPIN (`ceia/returns.py`)**: Estimates Roll (1984) effective bid-ask spread, Kyle's Lambda ($\lambda$) price impact per block volume, and Volume-Synchronized Probability of Toxicity (VPIN) adverse selection risk.
+* **Cornish-Fisher Fat-Tailed CVaR Surface (`ceia/var.py`)**: Generates multi-horizon Expected Shortfall (CVaR) risk surfaces across $1D, 5D, 10D, 21D$ horizons incorporating empirical skewness and excess kurtosis.
+* **Linguistic Complexity & Evasion Scorer (`ceia/sentiment.py`)**: Implements Gunning Fog Readability Index, SEC Plain English complexity rating, and Analyst Q&A Executive Evasion Scorer.
+* **Econometric BMP & Corrado Rank Tests (`ceia/eventstudy.py`)**: Incorporates Boehmer-Musumeci-Poulsen (1991) standardized tests robust to event-induced volatility clustering and Corrado (1989) non-parametric rank tests.
+* **Barndorff-Nielsen & Shephard Jump Diffusion (`ceia/eventstudy.py`)**: Disentangles continuous Brownian diffusion from discrete Poisson price jumps using bipower variation.
+* **Fundamental Forensics & Solvency Triad (`ceia/financials.py`)**: Computes Emerging Market Altman Z"-Score (solvency zones), Beneish M-Score (earnings manipulation index), and 9-point Piotroski F-Score (fundamental trend).
+* **8-Tab Institutional Excel Workbook Suite (`ceia/export_excel.py`)**: Automatically produces complete 8-tab workbooks across `Executive Summary`, `Daily Detail`, `Candidate Incidents`, `VaR Term Structure`, `Event CAR Attribution`, `Governance & Forensics`, `Microstructure & Slippage`, and `Peer Contagion & Spillover`.
 
 ---
 
